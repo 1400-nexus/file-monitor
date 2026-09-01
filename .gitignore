@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 .venv/
+NEXUS_C_GUIDE.md
+PERSON_C_GUIDE.md
