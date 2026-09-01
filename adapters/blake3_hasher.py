@@ -16,5 +16,6 @@ class Blake3Hasher(Hasher):
                     break
                 hasher.update(chunk)
         return hasher.hexdigest()
+    
     async def compute_hash(self,path:Path)->str:
         return await asyncio.to_thread(self._hash_file_sync,path)
