@@ -1,0 +1,11 @@
+[paths]
+watch_path = "./watch"
+socket_path = "./run/file-monitor.sock"
+
+[pacing]
+rate_limit = 1000
+
+[fec]
+k = 8
+n = 12
+symbol_bytes = 1400
