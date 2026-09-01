@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "file-monitor"
+version = "0.1.0"
+description = "Nexus TX-side file monitor and transfer planner"
+requires-python = ">=3.11"
+dependencies = [
+    "blake3",
+    "inotify-simple",
+    "structlog",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "hypothesis",
+    "mypy",
+    "ruff",
+]
+
+[project.scripts]
+file-monitor = "file_monitor.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/file_monitor"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "inotify_simple"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

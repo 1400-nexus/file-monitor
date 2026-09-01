@@ -2,15 +2,34 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+GF256_MAX_SHARES = 255
+
+ETHERNET_MTU_BYTES = 1500
+IP_HEADER_BYTES = 20
+UDP_HEADER_BYTES = 8
+FRAME_PREFIX_BYTES = 12
+PROTOBUF_OVERHEAD_BYTES = 18
+MAX_SYMBOL_BYTES = (
+    ETHERNET_MTU_BYTES
+    - IP_HEADER_BYTES
+    - UDP_HEADER_BYTES
+    - FRAME_PREFIX_BYTES
+    - PROTOBUF_OVERHEAD_BYTES
+)
+
 
 @dataclass(frozen=True)
 class PathsConfig:
     watch_path: Path
     socket_path: Path
 
+
 @dataclass(frozen=True)
 class PacingConfig:
     rate_limit: int
+
 
 @dataclass(frozen=True)
 class FecConfig:
@@ -18,19 +37,26 @@ class FecConfig:
     n: int
     symbol_bytes: int
 
+    @property
+    def block_size(self) -> int:
+        return self.k * self.symbol_bytes
+
+
 @dataclass(frozen=True)
 class AppConfig:
     paths: PathsConfig
     pacing: PacingConfig
     fec: FecConfig
 
-def _require(mapping: dict, *keys: str):
-    current = mapping
+
+def _require(mapping: dict[str, Any], *keys: str) -> Any:
+    current: Any = mapping
     for key in keys:
         if not isinstance(current, dict) or key not in current:
-            raise ValueError(f"Missing config key: {'/'.join(keys[: keys.index(key)+1])}")
+            raise ValueError(f"Missing config key: {'/'.join(keys[: keys.index(key) + 1])}")
         current = current[key]
     return current
+
 
 def load_config(config_path: Path) -> AppConfig:
     with open(config_path, "rb") as fh:
@@ -71,11 +97,13 @@ def load_config(config_path: Path) -> AppConfig:
     validate_config(cfg)
     return cfg
 
+
 def validate_config(cfg: AppConfig) -> None:
-    if not cfg.paths.watch_path.exists():
-        raise ValueError(f"Watch path does not exist: {cfg.paths.watch_path}")
-    if not cfg.paths.watch_path.is_dir():
-        raise ValueError(f"Watch path is not a directory: {cfg.paths.watch_path}")
+    if cfg.paths.watch_path.exists():
+        if not cfg.paths.watch_path.is_dir():
+            raise ValueError(f"paths.watch_path is not a directory: {cfg.paths.watch_path}")
+    else:
+        cfg.paths.watch_path.mkdir(parents=True, exist_ok=True)
 
     if cfg.pacing.rate_limit <= 0:
         raise ValueError("pacing.rate_limit must be > 0")
@@ -83,11 +111,13 @@ def validate_config(cfg: AppConfig) -> None:
     if cfg.fec.k <= 0 or cfg.fec.n <= 0 or cfg.fec.symbol_bytes <= 0:
         raise ValueError("fec.k, fec.n, and fec.symbol_bytes must all be > 0")
 
-    if cfg.fec.k > cfg.fec.n:
-        raise ValueError("fec.k cannot be greater than fec.n")
+    if cfg.fec.n > GF256_MAX_SHARES:
+        raise ValueError(f"fec.n ({cfg.fec.n}) cannot exceed {GF256_MAX_SHARES} (GF(2^8) limit)")
 
-    mtu = 1500
-    if cfg.fec.symbol_bytes > mtu:
+    if cfg.fec.k >= cfg.fec.n:
+        raise ValueError(f"fec.k ({cfg.fec.k}) must be less than fec.n ({cfg.fec.n})")
+
+    if cfg.fec.symbol_bytes > MAX_SYMBOL_BYTES:
         raise ValueError(
-            f"fec.symbol_bytes ({cfg.fec.symbol_bytes}) exceeds MTU budget ({mtu})"
+            f"fec.symbol_bytes ({cfg.fec.symbol_bytes}) exceeds MTU budget ({MAX_SYMBOL_BYTES})"
         )
