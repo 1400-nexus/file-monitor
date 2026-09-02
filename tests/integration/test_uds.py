@@ -185,6 +185,37 @@ async def test_write_loop_deregisters_peer_on_os_error() -> None:
     server_side.close()
 
 
+async def test_a_write_failure_tears_down_the_whole_peer() -> None:
+    server = UdsIpcServer(Path("unused.sock"), expected_proto_hash=EXPECTED_PROTO_HASH)
+    server_side, client_side = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    server_side.setblocking(False)
+    client_side.setblocking(False)
+
+    peer_task = asyncio.create_task(server._handle_peer(server_side))
+    try:
+        loop = asyncio.get_running_loop()
+        hello = ipc_pb2.SenderHello(sender_id=1, pid=1234, proto_hash=EXPECTED_PROTO_HASH)
+        await loop.sock_sendall(client_side, codec.encode(hello))
+        await asyncio.wait_for(_wait_until(lambda: SenderId(1) in server._peers), timeout=1)
+
+        # Break only the server's write direction. client_side stays open and
+        # never sends anything more, so without the fix _handle_peer's
+        # sock_recv would never unblock on its own.
+        server_side.shutdown(socket.SHUT_WR)
+
+        payload = codec.encode(ipc_pb2.Heartbeat(process_id=1, timestamp_unix_ms=1))
+        await server.send(SenderId(1), payload)
+
+        await asyncio.wait_for(_wait_until(lambda: SenderId(1) not in server._peers), timeout=1)
+        await asyncio.wait_for(peer_task, timeout=1)
+        assert peer_task.done()
+    finally:
+        client_side.close()
+        if not peer_task.done():
+            peer_task.cancel()
+            await asyncio.gather(peer_task, return_exceptions=True)
+
+
 async def _wait_until(predicate: Callable[[], bool]) -> None:
     while not predicate():
         await asyncio.sleep(0.01)

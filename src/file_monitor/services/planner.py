@@ -38,8 +38,6 @@ def apply_shard(manifest: common_pb2.Manifest, sender_index: int, shard_modulus:
     manifest.sender_id = sender_index
 
 
-# One session_id identifies one file transfer and is shared by every sender
-# assigned to that file; generate it once per file, not once per sender.
 def build_manifest(
     source_file: SourceFile,
     fec_params: FecParams,
@@ -49,6 +47,9 @@ def build_manifest(
     watch_root: Path,
     sender_bps_limit: int = UNSET_SENDER_BPS_LIMIT,
 ) -> common_pb2.Manifest:
+    """One session_id identifies one file transfer and is shared by every
+    sender assigned to that file; generate it once per file, not once per
+    sender."""
     if source_file.size_bytes < 0:
         raise ValueError(f"source_file.size_bytes must be >= 0, got {source_file.size_bytes}")
 

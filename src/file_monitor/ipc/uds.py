@@ -137,6 +137,10 @@ class UdsIpcServer:
             logger.error("peer_write_failed", sender_id=sender_id, error=str(error))
             if self._peers.get(sender_id) is queue:
                 self._peers.pop(sender_id, None)
+            try:
+                connection.shutdown(socket.SHUT_RD)
+            except OSError:
+                pass
 
     async def send(self, sender_id: SenderId, payload: bytes) -> None:
         queue = self._peers.get(sender_id)
