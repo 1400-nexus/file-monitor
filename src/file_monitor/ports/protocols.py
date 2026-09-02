@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -25,3 +25,13 @@ class IpcServer(Protocol):
     async def send(self, sender_id: SenderId, payload: bytes) -> None: ...
 
     def incoming(self) -> AsyncIterator[tuple[SenderId, bytes]]: ...
+
+
+class ProcessSpawner(Protocol):
+    async def spawn(self, argv: Sequence[str], env: dict[str, str] | None = None) -> object: ...
+
+    def terminate(self, process: object) -> None: ...
+
+    def kill(self, process: object) -> None: ...
+
+    async def wait(self, process: object) -> int: ...
