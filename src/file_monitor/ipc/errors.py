@@ -22,3 +22,9 @@ class ProtoHashMismatchError(Exception):
         self.sender_id: SenderId = sender_id
         self.reported_hash: bytes = reported_hash
         self.expected_hash: bytes = expected_hash
+
+
+class SendQueueFullError(Exception):
+    def __init__(self, sender_id: SenderId) -> None:
+        super().__init__(f"send queue full for sender_id {sender_id}")
+        self.sender_id: SenderId = sender_id

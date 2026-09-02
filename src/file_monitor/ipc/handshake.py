@@ -1,28 +1,39 @@
+"""Cross-service proto_hash contract.
+
+Both the Python file-monitor and the C++ sender/receiver must compute a
+byte-identical hash of the shared .proto contract, so that a SenderHello
+carrying a stale hash is refused before any data flows. The algorithm, in
+enough detail to implement independently in any language:
+
+1. List every file matching `*.proto` directly in the contract directory
+   (no recursion).
+2. Sort those filenames lexicographically (plain byte-wise ASCII sort).
+3. Read each file's raw bytes — no decoding, no comment stripping, no
+   whitespace normalization, no transformation of any kind.
+4. Feed the raw bytes of each file, in that sorted order, into a single
+   BLAKE3-256 hash, with no separator between files.
+5. The digest is the standard 32-byte BLAKE3 output.
+
+Trade-off: because the hash covers raw bytes, a comment-only edit to a
+.proto file changes the hash and forces every process to rebuild against
+the new contract. That is accepted deliberately — a reproducible check that
+occasionally over-fires beats a "canonicalized" one that quietly diverges
+between a Python and a C++ implementation and blocks all integration.
+"""
+
 from pathlib import Path
 
 import blake3
 
 from file_monitor.domain.ids import SenderId
-from file_monitor.ipc.constants import (
-    BLOCK_COMMENT_PATTERN,
-    LINE_COMMENT_PATTERN,
-    WHITESPACE_PATTERN,
-)
 from file_monitor.ipc.errors import ProtoHashMismatchError
 
 
-def canonicalize_proto_text(text: str) -> str:
-    without_block_comments = BLOCK_COMMENT_PATTERN.sub(" ", text)
-    without_comments = LINE_COMMENT_PATTERN.sub(" ", without_block_comments)
-    return WHITESPACE_PATTERN.sub(" ", without_comments).strip()
-
-
 def compute_proto_hash(proto_dir: Path) -> bytes:
-    proto_files = sorted(proto_dir.glob("*.proto"))
-    canonical_text = "\n".join(
-        canonicalize_proto_text(path.read_text(encoding="utf-8")) for path in proto_files
-    )
-    return blake3.blake3(canonical_text.encode("utf-8")).digest()
+    hasher = blake3.blake3()
+    for path in sorted(proto_dir.glob("*.proto")):
+        hasher.update(path.read_bytes())
+    return hasher.digest()
 
 
 def verify_proto_hash(sender_id: SenderId, reported_hash: bytes, expected_hash: bytes) -> None:

@@ -8,8 +8,8 @@ import pytest
 
 from file_monitor.domain.ids import SenderId
 from file_monitor.ipc import codec
-from file_monitor.ipc.constants import RECV_BUFFER_BYTES
-from file_monitor.ipc.errors import UnknownSenderError
+from file_monitor.ipc.constants import RECV_BUFFER_BYTES, SEND_QUEUE_MAXSIZE
+from file_monitor.ipc.errors import SendQueueFullError, UnknownSenderError
 from file_monitor.ipc.uds import UdsIpcServer
 
 pytestmark = pytest.mark.skipif(
@@ -142,6 +142,47 @@ async def test_mismatched_proto_hash_is_refused(tmp_path: Path) -> None:
     finally:
         serve_task.cancel()
         await asyncio.gather(serve_task, return_exceptions=True)
+
+
+async def test_full_send_queue_raises_send_queue_full_error(tmp_path: Path) -> None:
+    socket_path = tmp_path / "file-monitor.sock"
+    server = UdsIpcServer(socket_path, expected_proto_hash=EXPECTED_PROTO_HASH)
+    serve_task = asyncio.create_task(server.serve())
+
+    try:
+        await asyncio.wait_for(_wait_until(lambda: socket_path.exists()), timeout=1)
+
+        client = await connect_client(socket_path)
+        await send_hello(client, sender_id=1)
+        await asyncio.wait_for(_wait_until(lambda: SenderId(1) in server._peers), timeout=1)
+
+        payload = codec.encode(ipc_pb2.Heartbeat(process_id=1, timestamp_unix_ms=1))
+
+        with pytest.raises(SendQueueFullError):
+            for _ in range(SEND_QUEUE_MAXSIZE + 1):
+                await server.send(SenderId(1), payload)
+
+        client.close()
+    finally:
+        serve_task.cancel()
+        await asyncio.gather(serve_task, return_exceptions=True)
+
+
+async def test_write_loop_deregisters_peer_on_os_error() -> None:
+    server = UdsIpcServer(Path("unused.sock"), expected_proto_hash=EXPECTED_PROTO_HASH)
+    sender_id = SenderId(1)
+    send_queue: asyncio.Queue[bytes] = asyncio.Queue()
+    server._peers[sender_id] = send_queue
+
+    server_side, client_side = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    server_side.setblocking(False)
+    client_side.close()
+
+    send_queue.put_nowait(b"payload")
+    await asyncio.wait_for(server._write_loop(sender_id, server_side, send_queue), timeout=1)
+
+    assert sender_id not in server._peers
+    server_side.close()
 
 
 async def _wait_until(predicate: Callable[[], bool]) -> None:

@@ -12,6 +12,22 @@ SHORT_TIMEOUT_SECONDS = 0.05
 LONG_TIMEOUT_SECONDS = 1
 
 
+class SteppableClock:
+    def __init__(self) -> None:
+        self._waiters: list[asyncio.Future[None]] = []
+
+    def now(self) -> float:
+        return 0.0
+
+    async def sleep(self, seconds: float) -> None:
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._waiters.append(waiter)
+        await waiter
+
+    def release_oldest(self) -> None:
+        self._waiters.pop(0).set_result(None)
+
+
 def make_watcher() -> tuple[DirectoryWatcher, FakeFileEvents]:
     file_events = FakeFileEvents()
     return DirectoryWatcher(file_events, FakeClock()), file_events
@@ -57,3 +73,35 @@ async def test_events_after_settling_each_produce_their_own_output() -> None:
     file_events.emit(path)
     second = await asyncio.wait_for(anext(listener), timeout=LONG_TIMEOUT_SECONDS)
     assert second == path
+
+
+async def test_consumer_failure_propagates_instead_of_hanging() -> None:
+    watcher, file_events = make_watcher()
+    listener = watcher.listen()
+
+    file_events.fail(RuntimeError("inotify watch removed"))
+
+    with pytest.raises(RuntimeError, match="inotify watch removed"):
+        await asyncio.wait_for(anext(listener), timeout=LONG_TIMEOUT_SECONDS)
+
+
+async def test_stale_task_waking_up_late_does_not_delete_a_newer_registration() -> None:
+    file_events = FakeFileEvents()
+    clock = SteppableClock()
+    watcher = DirectoryWatcher(file_events, clock)
+    path = Path("/watch/example.bin")
+
+    watcher._debounce(path)
+    stale_task = watcher._pending[path]
+    await asyncio.sleep(0)
+
+    newer_task = asyncio.create_task(watcher._emit_when_stable(path))
+    watcher._pending[path] = newer_task
+    await asyncio.sleep(0)
+
+    clock.release_oldest()
+    await asyncio.wait_for(stale_task, timeout=LONG_TIMEOUT_SECONDS)
+
+    assert watcher._pending.get(path) is newer_task
+
+    newer_task.cancel()

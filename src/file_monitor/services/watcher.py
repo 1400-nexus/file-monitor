@@ -26,7 +26,17 @@ class DirectoryWatcher:
         consumer_task = asyncio.create_task(self._consume_raw_events())
         try:
             while True:
-                yield await self._stable_paths.get()
+                get_task: asyncio.Task[Path] = asyncio.create_task(self._stable_paths.get())
+                done, _pending_futures = await asyncio.wait(
+                    {get_task, consumer_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if consumer_task in done:
+                    get_task.cancel()
+                    error = consumer_task.exception()
+                    if error is not None:
+                        raise error
+                    raise RuntimeError("file event consumer task ended unexpectedly")
+                yield get_task.result()
         finally:
             consumer_task.cancel()
             for pending_task in self._pending.values():
@@ -44,5 +54,7 @@ class DirectoryWatcher:
 
     async def _emit_when_stable(self, path: Path) -> None:
         await self._clock.sleep(self._debounce_seconds)
-        del self._pending[path]
+        current_task = asyncio.current_task()
+        if self._pending.get(path) is current_task:
+            self._pending.pop(path, None)
         await self._stable_paths.put(path)
