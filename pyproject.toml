@@ -44,6 +44,7 @@ select = ["E", "F", "I", "UP"]
 strict = true
 mypy_path = "src"
 explicit_package_bases = true
+platform = "linux"
 
 [[tool.mypy.overrides]]
 module = "inotify_simple"

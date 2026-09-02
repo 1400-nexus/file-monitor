@@ -1,0 +1,107 @@
+import asyncio
+import socket
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any, cast
+
+import structlog
+
+from file_monitor.domain.ids import SenderId
+from file_monitor.ipc import codec
+from file_monitor.ipc.constants import RECV_BUFFER_BYTES, SEND_QUEUE_MAXSIZE
+from file_monitor.ipc.errors import HandshakeError, UnknownSenderError
+
+logger = structlog.get_logger(__name__)
+
+
+class UdsIpcServer:
+    def __init__(self, socket_path: Path) -> None:
+        self._socket_path = socket_path
+        self._peers: dict[SenderId, asyncio.Queue[bytes]] = {}
+        self._peer_tasks: set[asyncio.Task[None]] = set()
+        self._incoming: asyncio.Queue[tuple[SenderId, bytes]] = asyncio.Queue()
+
+    async def serve(self) -> None:
+        self._socket_path.parent.mkdir(parents=True, exist_ok=True)
+        self._socket_path.unlink(missing_ok=True)
+
+        listen_socket = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        listen_socket.setblocking(False)
+        listen_socket.bind(str(self._socket_path))
+        listen_socket.listen()
+
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                conn, _ = await loop.sock_accept(listen_socket)
+                conn.setblocking(False)
+                task = asyncio.create_task(self._handle_peer(conn))
+                self._peer_tasks.add(task)
+                task.add_done_callback(self._on_peer_task_done)
+        finally:
+            listen_socket.close()
+            for task in self._peer_tasks:
+                task.cancel()
+            await asyncio.gather(*self._peer_tasks, return_exceptions=True)
+
+    def _on_peer_task_done(self, task: asyncio.Task[None]) -> None:
+        self._peer_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("peer_task_failed", error=str(error))
+
+    async def _handle_peer(self, conn: socket.socket) -> None:
+        loop = asyncio.get_running_loop()
+        sender_id: SenderId | None = None
+        send_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SEND_QUEUE_MAXSIZE)
+        writer_task: asyncio.Task[None] | None = None
+        try:
+            while True:
+                raw = await loop.sock_recv(conn, RECV_BUFFER_BYTES)
+                if not raw:
+                    break
+
+                if sender_id is None:
+                    field_name, message = codec.decode(raw)
+                    if field_name != "sender_hello":
+                        raise HandshakeError(field_name)
+                    sender_id = SenderId(cast(Any, message).sender_id)
+                    self._peers[sender_id] = send_queue
+                    writer_task = asyncio.create_task(self._write_loop(conn, send_queue))
+                    logger.info("peer_connected", sender_id=sender_id)
+
+                await self._incoming.put((sender_id, raw))
+        except HandshakeError as error:
+            logger.warning("peer_handshake_failed", error=str(error))
+        finally:
+            if sender_id is not None:
+                if self._peers.get(sender_id) is send_queue:
+                    del self._peers[sender_id]
+                logger.info("peer_disconnected", sender_id=sender_id)
+            if writer_task is not None:
+                writer_task.cancel()
+            conn.close()
+
+    async def _write_loop(self, conn: socket.socket, queue: asyncio.Queue[bytes]) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            payload = await queue.get()
+            await loop.sock_sendall(conn, payload)
+
+    async def send(self, sender_id: SenderId, payload: bytes) -> None:
+        queue = self._peers.get(sender_id)
+        if queue is None:
+            raise UnknownSenderError(sender_id)
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            logger.warning("peer_send_queue_full_dropping_message", sender_id=sender_id)
+
+    def incoming(self) -> AsyncIterator[tuple[SenderId, bytes]]:
+        return self._iter_incoming()
+
+    async def _iter_incoming(self) -> AsyncIterator[tuple[SenderId, bytes]]:
+        while True:
+            yield await self._incoming.get()
