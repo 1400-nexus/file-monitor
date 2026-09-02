@@ -6,11 +6,11 @@ import inotify_simple
 
 
 class INotifyEvents:
-    def __init__(self, watch_path: Path):
-        self.watch_path = watch_path
-        self.inotify = inotify_simple.INotify()
+    def __init__(self, watch_path: Path) -> None:
+        self.watch_path: Path = watch_path
+        self.inotify: inotify_simple.INotify = inotify_simple.INotify()
         mask = inotify_simple.flags.CLOSE_WRITE | inotify_simple.flags.MOVED_TO
-        self.watch_descriptor = self.inotify.add_watch(str(watch_path), mask)
+        self.watch_descriptor: int = self.inotify.add_watch(str(watch_path), mask)
 
     async def listen(self) -> AsyncGenerator[Path, None]:
         while True:

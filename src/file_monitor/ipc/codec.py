@@ -1,6 +1,7 @@
 import ipc_pb2
 from google.protobuf.message import Message
 
+from file_monitor.ipc.constants import ENVELOPE_ONEOF_GROUP_NAME
 from file_monitor.ipc.message_types import FIELD_NAME_BY_MESSAGE_TYPE
 
 
@@ -14,7 +15,7 @@ def encode(payload: Message) -> bytes:
 def decode(raw: bytes) -> tuple[str, Message]:
     envelope = ipc_pb2.Envelope()
     envelope.ParseFromString(raw)
-    field_name = envelope.WhichOneof("msg")
+    field_name = envelope.WhichOneof(ENVELOPE_ONEOF_GROUP_NAME)
     if field_name is None:
         raise ValueError("Envelope has no message set")
     return field_name, getattr(envelope, field_name)

@@ -8,7 +8,11 @@ import structlog
 
 from file_monitor.domain.ids import SenderId
 from file_monitor.ipc import codec, handshake
-from file_monitor.ipc.constants import RECV_BUFFER_BYTES, SEND_QUEUE_MAXSIZE
+from file_monitor.ipc.constants import (
+    RECV_BUFFER_BYTES,
+    SEND_QUEUE_MAXSIZE,
+    SENDER_HELLO_FIELD_NAME,
+)
 from file_monitor.ipc.errors import HandshakeError, ProtoHashMismatchError, UnknownSenderError
 
 logger = structlog.get_logger(__name__)
@@ -16,8 +20,8 @@ logger = structlog.get_logger(__name__)
 
 class UdsIpcServer:
     def __init__(self, socket_path: Path, expected_proto_hash: bytes) -> None:
-        self._socket_path = socket_path
-        self._expected_proto_hash = expected_proto_hash
+        self._socket_path: Path = socket_path
+        self._expected_proto_hash: bytes = expected_proto_hash
         self._peers: dict[SenderId, asyncio.Queue[bytes]] = {}
         self._peer_tasks: set[asyncio.Task[None]] = set()
         self._incoming: asyncio.Queue[tuple[SenderId, bytes]] = asyncio.Queue()
@@ -34,9 +38,9 @@ class UdsIpcServer:
         loop = asyncio.get_running_loop()
         try:
             while True:
-                conn, _ = await loop.sock_accept(listen_socket)
-                conn.setblocking(False)
-                task = asyncio.create_task(self._handle_peer(conn))
+                connection, _ = await loop.sock_accept(listen_socket)
+                connection.setblocking(False)
+                task = asyncio.create_task(self._handle_peer(connection))
                 self._peer_tasks.add(task)
                 task.add_done_callback(self._on_peer_task_done)
         finally:
@@ -53,30 +57,19 @@ class UdsIpcServer:
         if error is not None:
             logger.error("peer_task_failed", error=str(error))
 
-    async def _handle_peer(self, conn: socket.socket) -> None:
+    async def _handle_peer(self, connection: socket.socket) -> None:
         loop = asyncio.get_running_loop()
         sender_id: SenderId | None = None
         send_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SEND_QUEUE_MAXSIZE)
         writer_task: asyncio.Task[None] | None = None
         try:
             while True:
-                raw = await loop.sock_recv(conn, RECV_BUFFER_BYTES)
+                raw = await loop.sock_recv(connection, RECV_BUFFER_BYTES)
                 if not raw:
                     break
 
                 if sender_id is None:
-                    field_name, message = codec.decode(raw)
-                    if field_name != "sender_hello":
-                        raise HandshakeError(field_name)
-                    hello = cast(Any, message)
-                    reported_sender_id = SenderId(hello.sender_id)
-                    handshake.verify_proto_hash(
-                        reported_sender_id, hello.proto_hash, self._expected_proto_hash
-                    )
-                    sender_id = reported_sender_id
-                    self._peers[sender_id] = send_queue
-                    writer_task = asyncio.create_task(self._write_loop(conn, send_queue))
-                    logger.info("peer_connected", sender_id=sender_id)
+                    sender_id, writer_task = self._complete_handshake(connection, send_queue, raw)
 
                 await self._incoming.put((sender_id, raw))
         except HandshakeError as error:
@@ -90,13 +83,27 @@ class UdsIpcServer:
                 logger.info("peer_disconnected", sender_id=sender_id)
             if writer_task is not None:
                 writer_task.cancel()
-            conn.close()
+            connection.close()
 
-    async def _write_loop(self, conn: socket.socket, queue: asyncio.Queue[bytes]) -> None:
+    def _complete_handshake(
+        self, connection: socket.socket, send_queue: asyncio.Queue[bytes], raw: bytes
+    ) -> tuple[SenderId, asyncio.Task[None]]:
+        field_name, message = codec.decode(raw)
+        if field_name != SENDER_HELLO_FIELD_NAME:
+            raise HandshakeError(field_name)
+        hello = cast(Any, message)
+        sender_id = SenderId(hello.sender_id)
+        handshake.verify_proto_hash(sender_id, hello.proto_hash, self._expected_proto_hash)
+        self._peers[sender_id] = send_queue
+        writer_task = asyncio.create_task(self._write_loop(connection, send_queue))
+        logger.info("peer_connected", sender_id=sender_id)
+        return sender_id, writer_task
+
+    async def _write_loop(self, connection: socket.socket, queue: asyncio.Queue[bytes]) -> None:
         loop = asyncio.get_running_loop()
         while True:
             payload = await queue.get()
-            await loop.sock_sendall(conn, payload)
+            await loop.sock_sendall(connection, payload)
 
     async def send(self, sender_id: SenderId, payload: bytes) -> None:
         queue = self._peers.get(sender_id)

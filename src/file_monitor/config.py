@@ -1,28 +1,44 @@
 import os
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from file_monitor.constants import (
+    DEFAULT_RATE_CEILING_BPS,
+    DEFAULT_RATE_FLOOR_BPS,
+    FEC_K_ENV_VAR,
+    FEC_K_KEY,
+    FEC_N_ENV_VAR,
+    FEC_N_KEY,
+    FEC_SECTION,
+    FEC_SYMBOL_BYTES_ENV_VAR,
+    FEC_SYMBOL_BYTES_KEY,
+    GF256_MAX_SHARES,
+    MAX_SYMBOL_BYTES,
+    PACING_SECTION,
+    PATHS_SECTION,
+    RATE_CEILING_BPS_ENV_VAR,
+    RATE_CEILING_BPS_KEY,
+    RATE_FLOOR_BPS_ENV_VAR,
+    RATE_FLOOR_BPS_KEY,
+    SOCKET_PATH_ENV_VAR,
+    SOCKET_PATH_KEY,
+    WATCH_PATH_ENV_VAR,
+    WATCH_PATH_KEY,
+)
 from file_monitor.domain.models import FecParams
 
-GF256_MAX_SHARES = 255
-
-ETHERNET_MTU_BYTES = 1500
-IP_HEADER_BYTES = 20
-UDP_HEADER_BYTES = 8
-FRAME_PREFIX_BYTES = 12
-PROTOBUF_OVERHEAD_BYTES = 18
-MAX_SYMBOL_BYTES = (
-    ETHERNET_MTU_BYTES
-    - IP_HEADER_BYTES
-    - UDP_HEADER_BYTES
-    - FRAME_PREFIX_BYTES
-    - PROTOBUF_OVERHEAD_BYTES
+ENV_OVERRIDES: tuple[tuple[str, str, str, Callable[[str], Any]], ...] = (
+    (WATCH_PATH_ENV_VAR, PATHS_SECTION, WATCH_PATH_KEY, str),
+    (SOCKET_PATH_ENV_VAR, PATHS_SECTION, SOCKET_PATH_KEY, str),
+    (RATE_CEILING_BPS_ENV_VAR, PACING_SECTION, RATE_CEILING_BPS_KEY, int),
+    (RATE_FLOOR_BPS_ENV_VAR, PACING_SECTION, RATE_FLOOR_BPS_KEY, int),
+    (FEC_K_ENV_VAR, FEC_SECTION, FEC_K_KEY, int),
+    (FEC_N_ENV_VAR, FEC_SECTION, FEC_N_KEY, int),
+    (FEC_SYMBOL_BYTES_ENV_VAR, FEC_SECTION, FEC_SYMBOL_BYTES_KEY, int),
 )
-
-DEFAULT_RATE_CEILING_BPS = 20_000_000
-DEFAULT_RATE_FLOOR_BPS = 5_000_000
 
 
 @dataclass(frozen=True)
@@ -54,76 +70,74 @@ def _require(mapping: dict[str, Any], *keys: str) -> Any:
 
 
 def load_config(config_path: Path) -> AppConfig:
-    with open(config_path, "rb") as fh:
-        data = tomllib.load(fh)
+    with open(config_path, "rb") as file_handle:
+        data = tomllib.load(file_handle)
 
-    env = os.environ
+    environment = os.environ
+    section_data_by_name = {
+        PATHS_SECTION: data.setdefault(PATHS_SECTION, {}),
+        PACING_SECTION: data.setdefault(PACING_SECTION, {}),
+        FEC_SECTION: data.setdefault(FEC_SECTION, {}),
+    }
 
-    paths_data = data.setdefault("paths", {})
-    pacing_data = data.setdefault("pacing", {})
-    fec_data = data.setdefault("fec", {})
+    for env_var_name, section, key, cast_value in ENV_OVERRIDES:
+        if env_var_name in environment:
+            section_data_by_name[section][key] = cast_value(environment[env_var_name])
 
-    if "WATCH_PATH" in env:
-        paths_data["watch_path"] = env["WATCH_PATH"]
-    if "SOCKET_PATH" in env:
-        paths_data["socket_path"] = env["SOCKET_PATH"]
-    if "RATE_CEILING_BPS" in env:
-        pacing_data["rate_ceiling_bps"] = int(env["RATE_CEILING_BPS"])
-    if "RATE_FLOOR_BPS" in env:
-        pacing_data["rate_floor_bps"] = int(env["RATE_FLOOR_BPS"])
-    if "FEC_K" in env:
-        fec_data["k"] = int(env["FEC_K"])
-    if "FEC_N" in env:
-        fec_data["n"] = int(env["FEC_N"])
-    if "FEC_SYMBOL_BYTES" in env:
-        fec_data["symbol_bytes"] = int(env["FEC_SYMBOL_BYTES"])
+    paths_data = section_data_by_name[PATHS_SECTION]
+    pacing_data = section_data_by_name[PACING_SECTION]
+    fec_data = section_data_by_name[FEC_SECTION]
 
-    cfg = AppConfig(
+    app_config = AppConfig(
         paths=PathsConfig(
-            watch_path=Path(_require(paths_data, "watch_path")),
-            socket_path=Path(_require(paths_data, "socket_path")),
+            watch_path=Path(_require(paths_data, WATCH_PATH_KEY)),
+            socket_path=Path(_require(paths_data, SOCKET_PATH_KEY)),
         ),
         pacing=PacingConfig(
-            rate_ceiling_bps=int(pacing_data.get("rate_ceiling_bps", DEFAULT_RATE_CEILING_BPS)),
-            rate_floor_bps=int(pacing_data.get("rate_floor_bps", DEFAULT_RATE_FLOOR_BPS)),
+            rate_ceiling_bps=int(pacing_data.get(RATE_CEILING_BPS_KEY, DEFAULT_RATE_CEILING_BPS)),
+            rate_floor_bps=int(pacing_data.get(RATE_FLOOR_BPS_KEY, DEFAULT_RATE_FLOOR_BPS)),
         ),
         fec=FecParams(
-            k=int(_require(fec_data, "k")),
-            n=int(_require(fec_data, "n")),
-            symbol_bytes=int(_require(fec_data, "symbol_bytes")),
+            k=int(_require(fec_data, FEC_K_KEY)),
+            n=int(_require(fec_data, FEC_N_KEY)),
+            symbol_bytes=int(_require(fec_data, FEC_SYMBOL_BYTES_KEY)),
         ),
     )
 
-    validate_config(cfg)
-    return cfg
+    validate_config(app_config)
+    return app_config
 
 
-def validate_config(cfg: AppConfig) -> None:
-    if cfg.paths.watch_path.exists():
-        if not cfg.paths.watch_path.is_dir():
-            raise ValueError(f"paths.watch_path is not a directory: {cfg.paths.watch_path}")
+def validate_config(app_config: AppConfig) -> None:
+    if app_config.paths.watch_path.is_dir():
+        pass
+    elif app_config.paths.watch_path.exists():
+        raise ValueError(f"paths.watch_path is not a directory: {app_config.paths.watch_path}")
     else:
-        cfg.paths.watch_path.mkdir(parents=True, exist_ok=True)
+        app_config.paths.watch_path.mkdir(parents=True, exist_ok=True)
 
-    if cfg.pacing.rate_floor_bps <= 0:
+    if app_config.pacing.rate_floor_bps <= 0:
         raise ValueError("pacing.rate_floor_bps must be > 0")
 
-    if cfg.pacing.rate_ceiling_bps < cfg.pacing.rate_floor_bps:
+    if app_config.pacing.rate_ceiling_bps < app_config.pacing.rate_floor_bps:
         raise ValueError(
-            f"pacing.rate_ceiling_bps ({cfg.pacing.rate_ceiling_bps}) must be >= "
-            f"pacing.rate_floor_bps ({cfg.pacing.rate_floor_bps})"
+            f"pacing.rate_ceiling_bps ({app_config.pacing.rate_ceiling_bps}) must be >= "
+            f"pacing.rate_floor_bps ({app_config.pacing.rate_floor_bps})"
         )
 
-    if cfg.fec.k <= 0 or cfg.fec.n <= 0 or cfg.fec.symbol_bytes <= 0:
+    if app_config.fec.k <= 0 or app_config.fec.n <= 0 or app_config.fec.symbol_bytes <= 0:
         raise ValueError("fec.k, fec.n, and fec.symbol_bytes must all be > 0")
 
-    if cfg.fec.n > GF256_MAX_SHARES:
-        raise ValueError(f"fec.n ({cfg.fec.n}) cannot exceed {GF256_MAX_SHARES} (GF(2^8) limit)")
-
-    if cfg.fec.k >= cfg.fec.n:
-        raise ValueError(f"fec.k ({cfg.fec.k}) must be less than fec.n ({cfg.fec.n})")
-
-    if cfg.fec.symbol_bytes > MAX_SYMBOL_BYTES:
+    if app_config.fec.n > GF256_MAX_SHARES:
         raise ValueError(
-            f"fec.symbol_bytes ({cfg.fec.symbol_bytes}) exceeds MTU budget ({MAX_SYMBOL_BYTES})"
+            f"fec.n ({app_config.fec.n}) cannot exceed {GF256_MAX_SHARES} (GF(2^8) limit)"
+        )
+
+    if app_config.fec.k >= app_config.fec.n:
+        raise ValueError(f"fec.k ({app_config.fec.k}) must be less than fec.n ({app_config.fec.n})")
+
+    if app_config.fec.symbol_bytes > MAX_SYMBOL_BYTES:
+        raise ValueError(
+            f"fec.symbol_bytes ({app_config.fec.symbol_bytes}) exceeds MTU budget "
+            f"({MAX_SYMBOL_BYTES})"
         )

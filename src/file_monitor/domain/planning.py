@@ -23,13 +23,15 @@ def derive_shard_assignments(
     total_blocks: int, active_senders: list[SenderId], base_port: int
 ) -> list[ShardAssignment]:
     sender_count = len(active_senders)
-    assignments = []
-    for i, sender_id in enumerate(active_senders):
-        assigned_blocks = [BlockId(j) for j in range(total_blocks) if j % sender_count == i]
-        target_port = base_port + i
-        assignments.append(
-            ShardAssignment(
-                sender_id=sender_id, assigned_blocks=assigned_blocks, target_port=target_port
-            )
+    assigned_blocks_by_index: list[list[BlockId]] = [[] for _ in range(sender_count)]
+    for block_id in range(total_blocks):
+        assigned_blocks_by_index[block_id % sender_count].append(BlockId(block_id))
+
+    return [
+        ShardAssignment(
+            sender_id=sender_id,
+            assigned_blocks=assigned_blocks_by_index[i],
+            target_port=base_port + i,
         )
-    return assignments
+        for i, sender_id in enumerate(active_senders)
+    ]

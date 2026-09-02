@@ -5,15 +5,15 @@ from file_monitor.services.constants import MISSED_HEARTBEAT_LIMIT
 
 class SenderRegistry:
     def __init__(self, clock: Clock, heartbeat_interval_seconds: float) -> None:
-        self._clock = clock
-        self._timeout_seconds = heartbeat_interval_seconds * MISSED_HEARTBEAT_LIMIT
+        self._clock: Clock = clock
+        self._timeout_seconds: float = heartbeat_interval_seconds * MISSED_HEARTBEAT_LIMIT
         self._last_seen: dict[SenderId, float] = {}
 
     def register(self, sender_id: SenderId) -> None:
         self._last_seen[sender_id] = self._clock.now()
 
     def refresh(self, sender_id: SenderId) -> None:
-        self._last_seen[sender_id] = self._clock.now()
+        self.register(sender_id)
 
     def remove(self, sender_id: SenderId) -> None:
         self._last_seen.pop(sender_id, None)
