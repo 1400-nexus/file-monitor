@@ -1,3 +1,12 @@
+"""file_monitor is the sole authority on which blocks each sender transmits.
+
+A ShardAssignment's shard_residue is positional — it comes from enumerating
+the active sender list — and is NOT the sender's process id (SenderId). A
+sender must never derive its shard from its own process id; it must transmit
+exactly the blocks where block_id % shard_modulus == shard_residue, using the
+shard_modulus and shard_residue values it was explicitly given.
+"""
+
 import math
 
 from file_monitor.domain.ids import BlockId, SenderId
@@ -19,19 +28,41 @@ def compute_block_plans(file_size: int, fec_params: FecParams) -> list[BlockPlan
     return block_plans
 
 
+def blocks_for_shard(total_blocks: int, modulus: int, residue: int) -> list[BlockId]:
+    return [BlockId(block_id) for block_id in range(total_blocks) if block_id % modulus == residue]
+
+
 def derive_shard_assignments(
     total_blocks: int, active_senders: list[SenderId], base_port: int
 ) -> list[ShardAssignment]:
-    sender_count = len(active_senders)
-    assigned_blocks_by_index: list[list[BlockId]] = [[] for _ in range(sender_count)]
-    for block_id in range(total_blocks):
-        assigned_blocks_by_index[block_id % sender_count].append(BlockId(block_id))
+    if not active_senders:
+        raise ValueError("active_senders must not be empty")
 
+    seen: set[SenderId] = set()
+    duplicate_sender_ids: set[SenderId] = set()
+    for sender_id in active_senders:
+        if sender_id in seen:
+            duplicate_sender_ids.add(sender_id)
+        seen.add(sender_id)
+    if duplicate_sender_ids:
+        raise ValueError(
+            f"active_senders contains duplicate sender ids: {sorted(duplicate_sender_ids)}"
+        )
+
+    if total_blocks < 0:
+        raise ValueError(f"total_blocks must be >= 0, got {total_blocks}")
+
+    if base_port <= 0:
+        raise ValueError(f"base_port must be > 0, got {base_port}")
+
+    shard_modulus = len(active_senders)
     return [
         ShardAssignment(
             sender_id=sender_id,
-            assigned_blocks=assigned_blocks_by_index[i],
-            target_port=base_port + i,
+            shard_modulus=shard_modulus,
+            shard_residue=shard_residue,
+            assigned_blocks=blocks_for_shard(total_blocks, shard_modulus, shard_residue),
+            target_port=base_port + shard_residue,
         )
-        for i, sender_id in enumerate(active_senders)
+        for shard_residue, sender_id in enumerate(active_senders)
     ]
