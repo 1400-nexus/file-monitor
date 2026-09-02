@@ -1,8 +1,8 @@
-from file_monitor.ports.protocols import Clock
-import time
 import asyncio
+import time
 
-class SystemClock(Clock):
+
+class SystemClock:
     def now(self) -> float:
         return time.monotonic()
 
