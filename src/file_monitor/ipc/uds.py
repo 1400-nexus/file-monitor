@@ -7,16 +7,17 @@ from typing import Any, cast
 import structlog
 
 from file_monitor.domain.ids import SenderId
-from file_monitor.ipc import codec
+from file_monitor.ipc import codec, handshake
 from file_monitor.ipc.constants import RECV_BUFFER_BYTES, SEND_QUEUE_MAXSIZE
-from file_monitor.ipc.errors import HandshakeError, UnknownSenderError
+from file_monitor.ipc.errors import HandshakeError, ProtoHashMismatchError, UnknownSenderError
 
 logger = structlog.get_logger(__name__)
 
 
 class UdsIpcServer:
-    def __init__(self, socket_path: Path) -> None:
+    def __init__(self, socket_path: Path, expected_proto_hash: bytes) -> None:
         self._socket_path = socket_path
+        self._expected_proto_hash = expected_proto_hash
         self._peers: dict[SenderId, asyncio.Queue[bytes]] = {}
         self._peer_tasks: set[asyncio.Task[None]] = set()
         self._incoming: asyncio.Queue[tuple[SenderId, bytes]] = asyncio.Queue()
@@ -67,7 +68,12 @@ class UdsIpcServer:
                     field_name, message = codec.decode(raw)
                     if field_name != "sender_hello":
                         raise HandshakeError(field_name)
-                    sender_id = SenderId(cast(Any, message).sender_id)
+                    hello = cast(Any, message)
+                    reported_sender_id = SenderId(hello.sender_id)
+                    handshake.verify_proto_hash(
+                        reported_sender_id, hello.proto_hash, self._expected_proto_hash
+                    )
+                    sender_id = reported_sender_id
                     self._peers[sender_id] = send_queue
                     writer_task = asyncio.create_task(self._write_loop(conn, send_queue))
                     logger.info("peer_connected", sender_id=sender_id)
@@ -75,6 +81,8 @@ class UdsIpcServer:
                 await self._incoming.put((sender_id, raw))
         except HandshakeError as error:
             logger.warning("peer_handshake_failed", error=str(error))
+        except ProtoHashMismatchError as error:
+            logger.error("peer_proto_hash_mismatch", error=str(error))
         finally:
             if sender_id is not None:
                 if self._peers.get(sender_id) is send_queue:

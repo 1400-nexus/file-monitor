@@ -16,6 +16,8 @@ pytestmark = pytest.mark.skipif(
     not hasattr(socket, "AF_UNIX"), reason="AF_UNIX sockets require a POSIX host"
 )
 
+EXPECTED_PROTO_HASH = b"expected-proto-hash"
+
 
 async def connect_client(socket_path: Path) -> socket.socket:
     loop = asyncio.get_running_loop()
@@ -30,15 +32,17 @@ async def connect_client(socket_path: Path) -> socket.socket:
             await asyncio.sleep(0.01)
 
 
-async def send_hello(client: socket.socket, sender_id: int) -> None:
+async def send_hello(
+    client: socket.socket, sender_id: int, proto_hash: bytes = EXPECTED_PROTO_HASH
+) -> None:
     loop = asyncio.get_running_loop()
-    hello = ipc_pb2.SenderHello(sender_id=sender_id, pid=1000 + sender_id, proto_hash=b"hash")
+    hello = ipc_pb2.SenderHello(sender_id=sender_id, pid=1000 + sender_id, proto_hash=proto_hash)
     await loop.sock_sendall(client, codec.encode(hello))
 
 
 async def test_serve_creates_missing_parent_directory(tmp_path: Path) -> None:
     socket_path = tmp_path / "nested" / "run" / "file-monitor.sock"
-    server = UdsIpcServer(socket_path)
+    server = UdsIpcServer(socket_path, expected_proto_hash=EXPECTED_PROTO_HASH)
     serve_task = asyncio.create_task(server.serve())
     try:
         await asyncio.wait_for(_wait_until(lambda: socket_path.exists()), timeout=1)
@@ -50,7 +54,7 @@ async def test_serve_creates_missing_parent_directory(tmp_path: Path) -> None:
 async def test_serve_unlinks_a_stale_socket_file(tmp_path: Path) -> None:
     socket_path = tmp_path / "file-monitor.sock"
     socket_path.write_text("stale")
-    server = UdsIpcServer(socket_path)
+    server = UdsIpcServer(socket_path, expected_proto_hash=EXPECTED_PROTO_HASH)
     serve_task = asyncio.create_task(server.serve())
     try:
         client = await asyncio.wait_for(connect_client(socket_path), timeout=1)
@@ -62,7 +66,7 @@ async def test_serve_unlinks_a_stale_socket_file(tmp_path: Path) -> None:
 
 async def test_two_peers_exchange_messages_both_ways(tmp_path: Path) -> None:
     socket_path = tmp_path / "file-monitor.sock"
-    server = UdsIpcServer(socket_path)
+    server = UdsIpcServer(socket_path, expected_proto_hash=EXPECTED_PROTO_HASH)
     serve_task = asyncio.create_task(server.serve())
     loop = asyncio.get_running_loop()
     incoming = server.incoming()
@@ -109,6 +113,32 @@ async def test_two_peers_exchange_messages_both_ways(tmp_path: Path) -> None:
         assert codec.decode(received_after) == ("session_complete", ack)
 
         client_b.close()
+    finally:
+        serve_task.cancel()
+        await asyncio.gather(serve_task, return_exceptions=True)
+
+
+async def test_mismatched_proto_hash_is_refused(tmp_path: Path) -> None:
+    socket_path = tmp_path / "file-monitor.sock"
+    server = UdsIpcServer(socket_path, expected_proto_hash=EXPECTED_PROTO_HASH)
+    serve_task = asyncio.create_task(server.serve())
+
+    loop = asyncio.get_running_loop()
+    try:
+        await asyncio.wait_for(_wait_until(lambda: socket_path.exists()), timeout=1)
+
+        client = await connect_client(socket_path)
+        await send_hello(client, sender_id=1, proto_hash=b"stale-proto-hash")
+
+        response = await asyncio.wait_for(loop.sock_recv(client, RECV_BUFFER_BYTES), timeout=1)
+        assert response == b""
+
+        assert SenderId(1) not in server._peers
+        with pytest.raises(UnknownSenderError):
+            await server.send(SenderId(1), b"anything")
+        assert not serve_task.done()
+
+        client.close()
     finally:
         serve_task.cancel()
         await asyncio.gather(serve_task, return_exceptions=True)
