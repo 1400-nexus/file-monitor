@@ -3,28 +3,31 @@ from pathlib import Path
 import pytest
 
 from file_monitor.config import (
+    DEFAULT_RATE_CEILING_BPS,
+    DEFAULT_RATE_FLOOR_BPS,
     GF256_MAX_SHARES,
     MAX_SYMBOL_BYTES,
     AppConfig,
-    FecConfig,
     PacingConfig,
     PathsConfig,
     validate_config,
 )
+from file_monitor.domain.models import FecParams
 
 
 def make_config(
     watch_path: Path,
     *,
-    rate_limit: int = 1000,
+    rate_ceiling_bps: int = DEFAULT_RATE_CEILING_BPS,
+    rate_floor_bps: int = DEFAULT_RATE_FLOOR_BPS,
     k: int = 200,
     n: int = 255,
     symbol_bytes: int = 1400,
 ) -> AppConfig:
     return AppConfig(
         paths=PathsConfig(watch_path=watch_path, socket_path=watch_path / "run.sock"),
-        pacing=PacingConfig(rate_limit=rate_limit),
-        fec=FecConfig(k=k, n=n, symbol_bytes=symbol_bytes),
+        pacing=PacingConfig(rate_ceiling_bps=rate_ceiling_bps, rate_floor_bps=rate_floor_bps),
+        fec=FecParams(k=k, n=n, symbol_bytes=symbol_bytes),
     )
 
 
@@ -43,9 +46,15 @@ def test_watch_path_rejects_non_directory(tmp_path: Path) -> None:
         validate_config(cfg)
 
 
-def test_rate_limit_must_be_positive(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path, rate_limit=0)
-    with pytest.raises(ValueError, match="pacing.rate_limit"):
+def test_rate_floor_must_be_positive(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path, rate_floor_bps=0)
+    with pytest.raises(ValueError, match="pacing.rate_floor_bps"):
+        validate_config(cfg)
+
+
+def test_rate_ceiling_must_be_at_least_floor(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path, rate_ceiling_bps=1_000_000, rate_floor_bps=5_000_000)
+    with pytest.raises(ValueError, match="pacing.rate_ceiling_bps"):
         validate_config(cfg)
 
 

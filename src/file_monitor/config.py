@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from file_monitor.domain.models import FecParams
+
 GF256_MAX_SHARES = 255
 
 ETHERNET_MTU_BYTES = 1500
@@ -19,6 +21,9 @@ MAX_SYMBOL_BYTES = (
     - PROTOBUF_OVERHEAD_BYTES
 )
 
+DEFAULT_RATE_CEILING_BPS = 20_000_000
+DEFAULT_RATE_FLOOR_BPS = 5_000_000
+
 
 @dataclass(frozen=True)
 class PathsConfig:
@@ -28,25 +33,15 @@ class PathsConfig:
 
 @dataclass(frozen=True)
 class PacingConfig:
-    rate_limit: int
-
-
-@dataclass(frozen=True)
-class FecConfig:
-    k: int
-    n: int
-    symbol_bytes: int
-
-    @property
-    def block_size(self) -> int:
-        return self.k * self.symbol_bytes
+    rate_ceiling_bps: int
+    rate_floor_bps: int
 
 
 @dataclass(frozen=True)
 class AppConfig:
     paths: PathsConfig
     pacing: PacingConfig
-    fec: FecConfig
+    fec: FecParams
 
 
 def _require(mapping: dict[str, Any], *keys: str) -> Any:
@@ -72,8 +67,10 @@ def load_config(config_path: Path) -> AppConfig:
         paths_data["watch_path"] = env["WATCH_PATH"]
     if "SOCKET_PATH" in env:
         paths_data["socket_path"] = env["SOCKET_PATH"]
-    if "RATE_LIMIT" in env:
-        pacing_data["rate_limit"] = int(env["RATE_LIMIT"])
+    if "RATE_CEILING_BPS" in env:
+        pacing_data["rate_ceiling_bps"] = int(env["RATE_CEILING_BPS"])
+    if "RATE_FLOOR_BPS" in env:
+        pacing_data["rate_floor_bps"] = int(env["RATE_FLOOR_BPS"])
     if "FEC_K" in env:
         fec_data["k"] = int(env["FEC_K"])
     if "FEC_N" in env:
@@ -86,8 +83,11 @@ def load_config(config_path: Path) -> AppConfig:
             watch_path=Path(_require(paths_data, "watch_path")),
             socket_path=Path(_require(paths_data, "socket_path")),
         ),
-        pacing=PacingConfig(rate_limit=int(_require(pacing_data, "rate_limit"))),
-        fec=FecConfig(
+        pacing=PacingConfig(
+            rate_ceiling_bps=int(pacing_data.get("rate_ceiling_bps", DEFAULT_RATE_CEILING_BPS)),
+            rate_floor_bps=int(pacing_data.get("rate_floor_bps", DEFAULT_RATE_FLOOR_BPS)),
+        ),
+        fec=FecParams(
             k=int(_require(fec_data, "k")),
             n=int(_require(fec_data, "n")),
             symbol_bytes=int(_require(fec_data, "symbol_bytes")),
@@ -105,8 +105,14 @@ def validate_config(cfg: AppConfig) -> None:
     else:
         cfg.paths.watch_path.mkdir(parents=True, exist_ok=True)
 
-    if cfg.pacing.rate_limit <= 0:
-        raise ValueError("pacing.rate_limit must be > 0")
+    if cfg.pacing.rate_floor_bps <= 0:
+        raise ValueError("pacing.rate_floor_bps must be > 0")
+
+    if cfg.pacing.rate_ceiling_bps < cfg.pacing.rate_floor_bps:
+        raise ValueError(
+            f"pacing.rate_ceiling_bps ({cfg.pacing.rate_ceiling_bps}) must be >= "
+            f"pacing.rate_floor_bps ({cfg.pacing.rate_floor_bps})"
+        )
 
     if cfg.fec.k <= 0 or cfg.fec.n <= 0 or cfg.fec.symbol_bytes <= 0:
         raise ValueError("fec.k, fec.n, and fec.symbol_bytes must all be > 0")

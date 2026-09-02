@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 from file_monitor.domain.ids import SenderId
 
@@ -22,6 +22,6 @@ class Hasher(Protocol):
 class IpcServer(Protocol):
     async def serve(self) -> None: ...
 
-    async def send(self, sender_id: SenderId, message: Any) -> None: ...
+    async def send(self, sender_id: SenderId, payload: bytes) -> None: ...
 
-    def incoming(self) -> AsyncIterator[Any]: ...
+    def incoming(self) -> AsyncIterator[tuple[SenderId, bytes]]: ...

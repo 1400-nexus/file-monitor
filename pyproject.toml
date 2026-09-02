@@ -11,6 +11,7 @@ dependencies = [
     "blake3",
     "inotify-simple",
     "structlog",
+    "protobuf",
 ]
 
 [project.optional-dependencies]
@@ -28,8 +29,12 @@ file-monitor = "file_monitor.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/file_monitor"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"libs/nexus-proto/generated/python" = "."
+
 [tool.ruff]
 line-length = 100
+extend-exclude = ["libs/nexus-proto"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
@@ -41,6 +46,10 @@ explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = "inotify_simple"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["common_pb2", "net_pb2", "ipc_pb2"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -3,7 +3,8 @@ watch_path = "./watch"
 socket_path = "./run/file-monitor.sock"
 
 [pacing]
-rate_limit = 1000
+rate_ceiling_bps = 20000000
+rate_floor_bps = 5000000
 
 # fec.k, fec.n, and fec.symbol_bytes are a cross-service contract with the
 # C++ sender and receiver. They MUST match exactly on every side — a mismatch
