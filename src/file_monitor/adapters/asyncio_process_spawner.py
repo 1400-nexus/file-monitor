@@ -1,6 +1,5 @@
 import asyncio
 from collections.abc import Sequence
-from typing import cast
 
 
 class AsyncioProcessSpawner:
@@ -9,11 +8,11 @@ class AsyncioProcessSpawner:
     ) -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(*argv, env=env)
 
-    def terminate(self, process: object) -> None:
-        cast(asyncio.subprocess.Process, process).terminate()
+    def terminate(self, process: asyncio.subprocess.Process) -> None:
+        process.terminate()
 
-    def kill(self, process: object) -> None:
-        cast(asyncio.subprocess.Process, process).kill()
+    def kill(self, process: asyncio.subprocess.Process) -> None:
+        process.kill()
 
-    async def wait(self, process: object) -> int:
-        return await cast(asyncio.subprocess.Process, process).wait()
+    async def wait(self, process: asyncio.subprocess.Process) -> int:
+        return await process.wait()

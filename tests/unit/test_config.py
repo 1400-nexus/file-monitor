@@ -2,10 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from file_monitor.config import AppConfig, PacingConfig, PathsConfig, validate_config
+from file_monitor.config import AppConfig, PacingConfig, PathsConfig, SendersConfig, validate_config
 from file_monitor.constants import (
+    DEFAULT_BASE_PORT,
     DEFAULT_RATE_CEILING_BPS,
     DEFAULT_RATE_FLOOR_BPS,
+    DEFAULT_SENDER_BINARY_PATH,
+    DEFAULT_SENDER_COUNT,
+    DEFAULT_TARGET_HOST,
     GF256_MAX_SHARES,
     MAX_SYMBOL_BYTES,
 )
@@ -20,11 +24,21 @@ def make_config(
     k: int = 200,
     n: int = 255,
     symbol_bytes: int = 1400,
+    target_host: str = DEFAULT_TARGET_HOST,
+    base_port: int = DEFAULT_BASE_PORT,
+    binary_path: str = DEFAULT_SENDER_BINARY_PATH,
+    sender_count: int = DEFAULT_SENDER_COUNT,
 ) -> AppConfig:
     return AppConfig(
         paths=PathsConfig(watch_path=watch_path, socket_path=watch_path / "run.sock"),
         pacing=PacingConfig(rate_ceiling_bps=rate_ceiling_bps, rate_floor_bps=rate_floor_bps),
         fec=FecParams(k=k, n=n, symbol_bytes=symbol_bytes),
+        senders=SendersConfig(
+            target_host=target_host,
+            base_port=base_port,
+            binary_path=binary_path,
+            sender_count=sender_count,
+        ),
     )
 
 
@@ -82,3 +96,32 @@ def test_fec_symbol_bytes_over_mtu_budget_is_rejected(tmp_path: Path) -> None:
 def test_fec_symbol_bytes_at_mtu_budget_is_accepted(tmp_path: Path) -> None:
     app_config = make_config(tmp_path, symbol_bytes=MAX_SYMBOL_BYTES)
     validate_config(app_config)
+
+
+def test_senders_binary_path_must_not_be_empty(tmp_path: Path) -> None:
+    app_config = make_config(tmp_path, binary_path="")
+    with pytest.raises(ValueError, match="senders.binary_path"):
+        validate_config(app_config)
+
+
+def test_senders_sender_count_must_be_at_least_one(tmp_path: Path) -> None:
+    app_config = make_config(tmp_path, sender_count=0)
+    with pytest.raises(ValueError, match="senders.sender_count"):
+        validate_config(app_config)
+
+
+def test_senders_base_port_below_range_is_rejected(tmp_path: Path) -> None:
+    app_config = make_config(tmp_path, base_port=0)
+    with pytest.raises(ValueError, match="senders.base_port"):
+        validate_config(app_config)
+
+
+def test_senders_base_port_above_range_is_rejected(tmp_path: Path) -> None:
+    app_config = make_config(tmp_path, base_port=65536)
+    with pytest.raises(ValueError, match="senders.base_port"):
+        validate_config(app_config)
+
+
+def test_senders_base_port_at_range_edges_is_accepted(tmp_path: Path) -> None:
+    validate_config(make_config(tmp_path, base_port=1))
+    validate_config(make_config(tmp_path / "other", base_port=65535))

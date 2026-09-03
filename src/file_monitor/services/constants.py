@@ -2,8 +2,8 @@ MISSED_HEARTBEAT_LIMIT = 3
 HEARTBEAT_INTERVAL_SECONDS = 5.0
 DEBOUNCE_SECONDS = 0.2
 
-# One initial send attempt plus one retry after dropping any sender that
-# failed and re-planning shards over the survivors.
+# Per-sender attempts to send the same already-planned AssignSession,
+# retried only on a transient SendQueueFullError.
 MAX_DISPATCH_ATTEMPTS = 2
 
 SESSION_ID_RANDOM_BYTES = 8

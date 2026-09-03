@@ -1,6 +1,5 @@
 import asyncio
 from collections.abc import Sequence
-from typing import cast
 
 KILL_EXIT_CODE = -9
 
@@ -12,6 +11,10 @@ class FakeProcess:
         self.terminated: bool = False
         self.killed: bool = False
         self.exit_code: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+        # Simulates the OS having already reclaimed this process (e.g. it
+        # exited and was reaped between a shutdown-time snapshot and the
+        # actual terminate()/kill()/wait() call).
+        self.reaped: bool = False
 
 
 class FakeSpawner:
@@ -29,17 +32,22 @@ class FakeSpawner:
         self.spawned.append(process)
         return process
 
-    def terminate(self, process: object) -> None:
-        cast(FakeProcess, process).terminated = True
+    def terminate(self, process: FakeProcess) -> None:
+        if process.reaped:
+            raise ProcessLookupError(process.argv)
+        process.terminated = True
 
-    def kill(self, process: object) -> None:
-        fake_process = cast(FakeProcess, process)
-        fake_process.killed = True
-        if not fake_process.exit_code.done():
-            fake_process.exit_code.set_result(KILL_EXIT_CODE)
+    def kill(self, process: FakeProcess) -> None:
+        if process.reaped:
+            raise ProcessLookupError(process.argv)
+        process.killed = True
+        if not process.exit_code.done():
+            process.exit_code.set_result(KILL_EXIT_CODE)
 
-    async def wait(self, process: object) -> int:
-        return await cast(FakeProcess, process).exit_code
+    async def wait(self, process: FakeProcess) -> int:
+        if process.reaped:
+            raise ProcessLookupError(process.argv)
+        return await process.exit_code
 
     def exit(self, process: FakeProcess, code: int) -> None:
         if not process.exit_code.done():

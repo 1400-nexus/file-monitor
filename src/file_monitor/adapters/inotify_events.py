@@ -14,11 +14,8 @@ class INotifyEvents:
         self._closed: bool = False
 
     def close(self) -> None:
-        # asyncio.to_thread's worker thread is blocked in poll() on this fd;
-        # cancelling the asyncio task awaiting it does not touch that thread,
-        # and closing the fd out from under a thread blocked in poll() is not
-        # reliable on Linux. Removing the watch makes the kernel enqueue an
-        # IN_IGNORED event, which reliably wakes the blocked read().
+        # Closing the fd doesn't reliably wake a thread blocked in poll() on
+        # it; rm_watch() does, via a kernel-generated IN_IGNORED event.
         self._closed = True
         try:
             self.inotify.rm_watch(self.watch_descriptor)

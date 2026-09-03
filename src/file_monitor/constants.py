@@ -19,6 +19,7 @@ DEFAULT_RATE_FLOOR_BPS = 5_000_000
 PATHS_SECTION = "paths"
 PACING_SECTION = "pacing"
 FEC_SECTION = "fec"
+SENDERS_SECTION = "senders"
 
 WATCH_PATH_KEY = "watch_path"
 SOCKET_PATH_KEY = "socket_path"
@@ -27,6 +28,10 @@ RATE_FLOOR_BPS_KEY = "rate_floor_bps"
 FEC_K_KEY = "k"
 FEC_N_KEY = "n"
 FEC_SYMBOL_BYTES_KEY = "symbol_bytes"
+TARGET_HOST_KEY = "target_host"
+BASE_PORT_KEY = "base_port"
+BINARY_PATH_KEY = "binary_path"
+SENDER_COUNT_KEY = "sender_count"
 
 WATCH_PATH_ENV_VAR = "WATCH_PATH"
 SOCKET_PATH_ENV_VAR = "SOCKET_PATH"
@@ -35,16 +40,22 @@ RATE_FLOOR_BPS_ENV_VAR = "RATE_FLOOR_BPS"
 FEC_K_ENV_VAR = "FEC_K"
 FEC_N_ENV_VAR = "FEC_N"
 FEC_SYMBOL_BYTES_ENV_VAR = "FEC_SYMBOL_BYTES"
+TARGET_HOST_ENV_VAR = "SENDERS_TARGET_HOST"
+BASE_PORT_ENV_VAR = "SENDERS_BASE_PORT"
+BINARY_PATH_ENV_VAR = "SENDERS_BINARY_PATH"
+SENDER_COUNT_ENV_VAR = "SENDERS_SENDER_COUNT"
 
 NEXUS_CONFIG_ENV_VAR = "NEXUS_CONFIG"
 DEFAULT_CONFIG_PATH = "config.toml"
 
 PROTO_CONTRACT_DIR = "libs/nexus-proto/proto"
 
-# Placeholder composition-root wiring: no config field or real sender binary
-# exists yet for these. Replace once per-deployment sender configuration and
-# the C++ sender binary are available.
-SENDER_COUNT = 3
-SENDER_BINARY_PATH = "./bin/nexus-sender"
 DEFAULT_TARGET_HOST = "127.0.0.1"
 DEFAULT_BASE_PORT = 9000
+DEFAULT_SENDER_BINARY_PATH = "./bin/nexus-sender"
+DEFAULT_SENDER_COUNT = 3
+
+MIN_PORT = 1
+MAX_PORT = 65535
+
+CONFIG_ERROR_EXIT_CODE = 78  # sysexits.h EX_CONFIG

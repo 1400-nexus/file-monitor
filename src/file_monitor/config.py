@@ -6,8 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from file_monitor.constants import (
+    BASE_PORT_ENV_VAR,
+    BASE_PORT_KEY,
+    BINARY_PATH_ENV_VAR,
+    BINARY_PATH_KEY,
+    DEFAULT_BASE_PORT,
     DEFAULT_RATE_CEILING_BPS,
     DEFAULT_RATE_FLOOR_BPS,
+    DEFAULT_SENDER_BINARY_PATH,
+    DEFAULT_SENDER_COUNT,
+    DEFAULT_TARGET_HOST,
     FEC_K_ENV_VAR,
     FEC_K_KEY,
     FEC_N_ENV_VAR,
@@ -16,15 +24,22 @@ from file_monitor.constants import (
     FEC_SYMBOL_BYTES_ENV_VAR,
     FEC_SYMBOL_BYTES_KEY,
     GF256_MAX_SHARES,
+    MAX_PORT,
     MAX_SYMBOL_BYTES,
+    MIN_PORT,
     PACING_SECTION,
     PATHS_SECTION,
     RATE_CEILING_BPS_ENV_VAR,
     RATE_CEILING_BPS_KEY,
     RATE_FLOOR_BPS_ENV_VAR,
     RATE_FLOOR_BPS_KEY,
+    SENDER_COUNT_ENV_VAR,
+    SENDER_COUNT_KEY,
+    SENDERS_SECTION,
     SOCKET_PATH_ENV_VAR,
     SOCKET_PATH_KEY,
+    TARGET_HOST_ENV_VAR,
+    TARGET_HOST_KEY,
     WATCH_PATH_ENV_VAR,
     WATCH_PATH_KEY,
 )
@@ -38,6 +53,10 @@ ENV_OVERRIDES: tuple[tuple[str, str, str, Callable[[str], Any]], ...] = (
     (FEC_K_ENV_VAR, FEC_SECTION, FEC_K_KEY, int),
     (FEC_N_ENV_VAR, FEC_SECTION, FEC_N_KEY, int),
     (FEC_SYMBOL_BYTES_ENV_VAR, FEC_SECTION, FEC_SYMBOL_BYTES_KEY, int),
+    (TARGET_HOST_ENV_VAR, SENDERS_SECTION, TARGET_HOST_KEY, str),
+    (BASE_PORT_ENV_VAR, SENDERS_SECTION, BASE_PORT_KEY, int),
+    (BINARY_PATH_ENV_VAR, SENDERS_SECTION, BINARY_PATH_KEY, str),
+    (SENDER_COUNT_ENV_VAR, SENDERS_SECTION, SENDER_COUNT_KEY, int),
 )
 
 
@@ -54,10 +73,19 @@ class PacingConfig:
 
 
 @dataclass(frozen=True)
+class SendersConfig:
+    target_host: str
+    base_port: int
+    binary_path: str
+    sender_count: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     paths: PathsConfig
     pacing: PacingConfig
     fec: FecParams
+    senders: SendersConfig
 
 
 def _require(mapping: dict[str, Any], *keys: str) -> Any:
@@ -78,6 +106,7 @@ def load_config(config_path: Path) -> AppConfig:
         PATHS_SECTION: data.setdefault(PATHS_SECTION, {}),
         PACING_SECTION: data.setdefault(PACING_SECTION, {}),
         FEC_SECTION: data.setdefault(FEC_SECTION, {}),
+        SENDERS_SECTION: data.setdefault(SENDERS_SECTION, {}),
     }
 
     for env_var_name, section, key, cast_value in ENV_OVERRIDES:
@@ -87,6 +116,7 @@ def load_config(config_path: Path) -> AppConfig:
     paths_data = section_data_by_name[PATHS_SECTION]
     pacing_data = section_data_by_name[PACING_SECTION]
     fec_data = section_data_by_name[FEC_SECTION]
+    senders_data = section_data_by_name[SENDERS_SECTION]
 
     app_config = AppConfig(
         paths=PathsConfig(
@@ -101,6 +131,12 @@ def load_config(config_path: Path) -> AppConfig:
             k=int(_require(fec_data, FEC_K_KEY)),
             n=int(_require(fec_data, FEC_N_KEY)),
             symbol_bytes=int(_require(fec_data, FEC_SYMBOL_BYTES_KEY)),
+        ),
+        senders=SendersConfig(
+            target_host=str(senders_data.get(TARGET_HOST_KEY, DEFAULT_TARGET_HOST)),
+            base_port=int(senders_data.get(BASE_PORT_KEY, DEFAULT_BASE_PORT)),
+            binary_path=str(senders_data.get(BINARY_PATH_KEY, DEFAULT_SENDER_BINARY_PATH)),
+            sender_count=int(senders_data.get(SENDER_COUNT_KEY, DEFAULT_SENDER_COUNT)),
         ),
     )
 
@@ -140,4 +176,18 @@ def validate_config(app_config: AppConfig) -> None:
         raise ValueError(
             f"fec.symbol_bytes ({app_config.fec.symbol_bytes}) exceeds MTU budget "
             f"({MAX_SYMBOL_BYTES})"
+        )
+
+    if not app_config.senders.binary_path:
+        raise ValueError("senders.binary_path must not be empty")
+
+    if app_config.senders.sender_count < 1:
+        raise ValueError(
+            f"senders.sender_count must be >= 1, got {app_config.senders.sender_count}"
+        )
+
+    if not (MIN_PORT <= app_config.senders.base_port <= MAX_PORT):
+        raise ValueError(
+            f"senders.base_port must be in [{MIN_PORT}, {MAX_PORT}], "
+            f"got {app_config.senders.base_port}"
         )

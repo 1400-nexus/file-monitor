@@ -1,8 +1,10 @@
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from file_monitor.domain.ids import SenderId
+
+ProcessHandle = TypeVar("ProcessHandle")
 
 
 class Clock(Protocol):
@@ -29,11 +31,13 @@ class IpcServer(Protocol):
     def incoming(self) -> AsyncIterator[tuple[SenderId, bytes]]: ...
 
 
-class ProcessSpawner(Protocol):
-    async def spawn(self, argv: Sequence[str], env: dict[str, str] | None = None) -> object: ...
+class ProcessSpawner(Protocol[ProcessHandle]):
+    async def spawn(
+        self, argv: Sequence[str], env: dict[str, str] | None = None
+    ) -> ProcessHandle: ...
 
-    def terminate(self, process: object) -> None: ...
+    def terminate(self, process: ProcessHandle) -> None: ...
 
-    def kill(self, process: object) -> None: ...
+    def kill(self, process: ProcessHandle) -> None: ...
 
-    async def wait(self, process: object) -> int: ...
+    async def wait(self, process: ProcessHandle) -> int: ...

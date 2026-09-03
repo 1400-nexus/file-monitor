@@ -2,8 +2,8 @@ from pathlib import Path
 
 import structlog
 
-from file_monitor.domain.ids import SenderId
-from file_monitor.domain.models import FecParams, SourceFile
+from file_monitor.domain.ids import BlockId, SenderId
+from file_monitor.domain.models import FecParams, ShardAssignment, SourceFile
 from file_monitor.domain.planning import calculate_block_count, derive_shard_assignments
 from file_monitor.ipc import codec
 from file_monitor.ipc.errors import SendQueueFullError, UnknownSenderError
@@ -57,6 +57,9 @@ class SessionDispatcher:
         self._dispatched_sessions[session_id] = succeeded_sender_ids
         return session_id
 
+    def complete_session(self, session_id: str) -> None:
+        self._dispatched_sessions.pop(session_id, None)
+
     async def _send_to_senders(
         self,
         session_id: str,
@@ -64,41 +67,34 @@ class SessionDispatcher:
         total_blocks: int,
         active_senders: list[SenderId],
     ) -> list[SenderId] | None:
-        senders = active_senders
-        for _attempt in range(MAX_DISPATCH_ATTEMPTS):
-            assignments = derive_shard_assignments(total_blocks, senders, self._base_port)
-            succeeded: list[SenderId] = []
-            failed: list[SenderId] = []
+        # Every sender gets at most one AssignSession for this session_id —
+        # the wire contract doesn't say whether a later one supersedes an
+        # earlier one (flagged for the team, unsettled with the C++ side),
+        # so this never sends a second. A failed sender's shard is lost,
+        # not redistributed to survivors.
+        assignments = derive_shard_assignments(total_blocks, active_senders, self._base_port)
 
-            for assignment in assignments:
-                manifest = planner.build_manifest(
-                    source_file,
-                    self._fec_params,
-                    session_id=session_id,
-                    sender_index=assignment.shard_residue,
-                    shard_modulus=assignment.shard_modulus,
-                    watch_root=self._watch_root,
-                )
-                assign_session = planner.build_assign_session(
-                    manifest,
-                    shard_modulus=assignment.shard_modulus,
-                    target_host=self._target_host,
-                    target_port=assignment.target_port,
-                )
-                payload = codec.encode(assign_session)
+        succeeded: list[SenderId] = []
+        lost_assignments: list[ShardAssignment] = []
 
-                try:
-                    await self._ipc.send(assignment.sender_id, payload)
-                except (SendQueueFullError, UnknownSenderError) as error:
-                    logger.warning(
-                        "dispatch_send_failed",
-                        session_id=session_id,
-                        sender_id=assignment.sender_id,
-                        error=str(error),
-                    )
-                    failed.append(assignment.sender_id)
-                    continue
+        for assignment in assignments:
+            manifest = planner.build_manifest(
+                source_file,
+                self._fec_params,
+                session_id=session_id,
+                sender_index=assignment.shard_residue,
+                shard_modulus=assignment.shard_modulus,
+                watch_root=self._watch_root,
+            )
+            assign_session = planner.build_assign_session(
+                manifest,
+                shard_modulus=assignment.shard_modulus,
+                target_host=self._target_host,
+                target_port=assignment.target_port,
+            )
+            payload = codec.encode(assign_session)
 
+            if await self._deliver(session_id, assignment, payload):
                 logger.info(
                     "session_dispatched",
                     session_id=session_id,
@@ -109,13 +105,52 @@ class SessionDispatcher:
                     block_count=len(assignment.assigned_blocks),
                 )
                 succeeded.append(assignment.sender_id)
+            else:
+                lost_assignments.append(assignment)
 
-            if not failed:
-                return succeeded
+        if lost_assignments:
+            self._log_partial_failure(session_id, lost_assignments)
 
-            senders = [sender_id for sender_id in senders if sender_id not in failed]
-            if not senders:
-                break
+        return succeeded or None
 
-        logger.error("dispatch_failed_after_retry", session_id=session_id)
-        return None
+    async def _deliver(self, session_id: str, assignment: ShardAssignment, payload: bytes) -> bool:
+        # SendQueueFullError is transient and worth retrying; UnknownSenderError
+        # means the peer is gone, so this assignment is abandoned immediately.
+        for _attempt in range(MAX_DISPATCH_ATTEMPTS):
+            try:
+                await self._ipc.send(assignment.sender_id, payload)
+            except UnknownSenderError as error:
+                logger.warning(
+                    "dispatch_send_failed",
+                    session_id=session_id,
+                    sender_id=assignment.sender_id,
+                    reason="sender_disconnected",
+                    error=str(error),
+                )
+                self._registry.remove(assignment.sender_id)
+                return False
+            except SendQueueFullError as error:
+                logger.warning(
+                    "dispatch_send_failed",
+                    session_id=session_id,
+                    sender_id=assignment.sender_id,
+                    reason="send_queue_full",
+                    error=str(error),
+                )
+                continue
+            else:
+                return True
+        return False
+
+    def _log_partial_failure(
+        self, session_id: str, lost_assignments: list[ShardAssignment]
+    ) -> None:
+        lost_block_ids: list[BlockId] = [
+            block_id for assignment in lost_assignments for block_id in assignment.assigned_blocks
+        ]
+        logger.error(
+            "dispatch_partially_failed",
+            session_id=session_id,
+            failed_sender_ids=[assignment.sender_id for assignment in lost_assignments],
+            lost_block_ids=lost_block_ids,
+        )

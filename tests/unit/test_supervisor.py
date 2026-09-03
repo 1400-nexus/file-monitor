@@ -8,6 +8,25 @@ from tests.fakes.fake_spawner import FakeProcess, FakeSpawner
 POLL_TIMEOUT_SECONDS = 1
 
 
+class NeverResolvingClock:
+    # FakeClock.sleep() advances and returns with no internal suspension,
+    # which makes it useless for racing against shutdown (it always "wins"
+    # instantly, regardless of scheduling order — see the backoff-vs-shutdown
+    # test below). This clock's sleep() genuinely blocks until cancelled, so
+    # the only way out of it is the stop-event side of the race.
+    def __init__(self) -> None:
+        self._now: float = 0.0
+        self.pending_sleeps: list[asyncio.Future[None]] = []
+
+    def now(self) -> float:
+        return self._now
+
+    async def sleep(self, seconds: float) -> None:
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self.pending_sleeps.append(waiter)
+        await waiter
+
+
 async def _wait_until(predicate: Callable[[], bool]) -> None:
     while not predicate():
         await asyncio.sleep(0)
@@ -175,3 +194,42 @@ async def test_shutdown_is_idempotent() -> None:
         if not run_task.done():
             run_task.cancel()
             await asyncio.gather(run_task, return_exceptions=True)
+
+
+async def test_shutdown_during_backoff_window_exits_without_waiting_out_the_delay() -> None:
+    spec = ChildSpec(name="worker", argv=["worker"])
+    spawner = FakeSpawner()
+    clock = NeverResolvingClock()
+    supervisor = ProcessSupervisor([spec], spawner, clock, backoff_schedule=(30.0,))
+
+    run_task = asyncio.create_task(supervisor.run())
+    try:
+        await _wait_for(lambda: len(spawner.spawned) >= 1)
+        spawner.exit(spawner.spawned[0], 1)
+
+        # Child has observed the exit and is now parked in its (never
+        # resolving on its own) 30s backoff sleep.
+        await _wait_for(lambda: len(clock.pending_sleeps) >= 1)
+
+        await asyncio.wait_for(supervisor.shutdown(), timeout=POLL_TIMEOUT_SECONDS)
+        await asyncio.wait_for(run_task, timeout=POLL_TIMEOUT_SECONDS)
+
+        # The backoff sleep was cancelled, never completed — it never got
+        # the chance to advance the clock by the 30s delay.
+        assert clock.now() == 0.0
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+
+
+async def test_shutdown_tolerates_a_process_the_os_already_reaped() -> None:
+    spawner = FakeSpawner()
+    clock = FakeClock()
+    supervisor: ProcessSupervisor[FakeProcess] = ProcessSupervisor([], spawner, clock)
+
+    ghost = FakeProcess(["ghost"], None)
+    ghost.reaped = True
+    supervisor._processes["ghost"] = ghost
+
+    await asyncio.wait_for(supervisor.shutdown(), timeout=POLL_TIMEOUT_SECONDS)

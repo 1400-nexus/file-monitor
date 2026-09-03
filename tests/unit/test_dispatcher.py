@@ -4,7 +4,7 @@ from typing import Any, cast
 from file_monitor.domain.ids import SenderId
 from file_monitor.domain.models import FecParams
 from file_monitor.ipc import codec
-from file_monitor.ipc.errors import SendQueueFullError
+from file_monitor.ipc.errors import SendQueueFullError, UnknownSenderError
 from file_monitor.services.dispatcher import SessionDispatcher
 from file_monitor.services.registry import SenderRegistry
 from tests.fakes.fake_clock import FakeClock
@@ -38,14 +38,11 @@ def make_dispatcher(
 
 
 def blocks_from_sent(sent: list[tuple[SenderId, bytes]]) -> list[int]:
-    # A retry resends a fresh (superseding) assignment to every survivor, not
-    # just the sender that failed, since the modulus changes for everyone
-    # once the sender count shrinks. Only each sender's latest message is
-    # authoritative.
-    latest_payload_by_sender: dict[SenderId, bytes] = dict(sent)
-
+    # Each sender receives at most one AssignSession per session: shard
+    # modulus/residue are planned once and only the send is retried, never
+    # the plan, so there is never a second, conflicting message to resolve.
     blocks: list[int] = []
-    for payload in latest_payload_by_sender.values():
+    for _sender_id, payload in sent:
         field_name, message = codec.decode(payload)
         assert field_name == "assign_session"
         message = cast(Any, message)
@@ -92,7 +89,7 @@ async def test_empty_registry_returns_none_and_sends_nothing(tmp_path: Path) -> 
     assert dispatcher._dispatched_sessions == {}
 
 
-async def test_failed_sender_is_dropped_and_survivors_get_replanned_assignment(
+async def test_transient_failure_recovers_on_retry_without_touching_other_senders(
     tmp_path: Path,
 ) -> None:
     file_path = tmp_path / "example.bin"
@@ -106,30 +103,122 @@ async def test_failed_sender_is_dropped_and_survivors_get_replanned_assignment(
     session_id = await dispatcher.dispatch(file_path)
 
     assert session_id is not None
-    sent_sender_ids = {sender_id for sender_id, _ in ipc.sent}
-    assert sent_sender_ids == {SenderId(0), SenderId(2)}
+    # Each sender receives exactly one message: the retry re-sends the SAME
+    # already-planned assignment to sender 1, it never re-plans shards or
+    # sends a second message to 0/2.
+    assert len(ipc.sent) == 3
+    assert {sender_id for sender_id, _ in ipc.sent} == {SenderId(0), SenderId(1), SenderId(2)}
     assert sorted(blocks_from_sent(ipc.sent)) == list(range(TOTAL_BLOCKS))
-    assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(2)]
+    assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(1), SenderId(2)]
 
 
-async def test_dispatch_gives_up_after_one_retry_if_the_retry_also_fails(
+async def test_sender_that_exhausts_retries_is_lost_survivors_keep_original_shards(
     tmp_path: Path,
 ) -> None:
     file_path = tmp_path / "example.bin"
     file_path.write_bytes(FILE_CONTENTS)
 
     ipc = FakeIpcServer()
-    # Attempt 1: sender 1 fails and is dropped; sender 2 succeeds. Attempt 2
-    # (the retry, over survivors [0, 2]): sender 2 fails this time too, so the
-    # retry itself has a failure and dispatch must give up rather than retry
-    # again.
+    # Both of sender 1's attempts fail: its shard (residue 1 of modulus 3,
+    # planned from the original 3-sender set) is permanently lost, not
+    # redistributed to 0 or 2 — 0 and 2 keep their original assignments.
     ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
-    ipc.succeed_next_send(SenderId(2))
-    ipc.fail_next_send(SenderId(2), SendQueueFullError(SenderId(2)))
+    ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
     registry = make_registry(SenderId(0), SenderId(1), SenderId(2))
     dispatcher = make_dispatcher(ipc, registry, tmp_path)
 
     session_id = await dispatcher.dispatch(file_path)
 
+    assert session_id is not None
+    sent_sender_ids = {sender_id for sender_id, _ in ipc.sent}
+    assert sent_sender_ids == {SenderId(0), SenderId(2)}
+    lost_blocks = [block_id for block_id in range(TOTAL_BLOCKS) if block_id % 3 == 1]
+    assert sorted(blocks_from_sent(ipc.sent)) == [
+        block_id for block_id in range(TOTAL_BLOCKS) if block_id not in lost_blocks
+    ]
+    assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(2)]
+
+
+async def test_single_sender_that_exhausts_retries_returns_none(tmp_path: Path) -> None:
+    file_path = tmp_path / "example.bin"
+    file_path.write_bytes(FILE_CONTENTS)
+
+    ipc = FakeIpcServer()
+    ipc.fail_next_send(SenderId(0), SendQueueFullError(SenderId(0)))
+    ipc.fail_next_send(SenderId(0), SendQueueFullError(SenderId(0)))
+    registry = make_registry(SenderId(0))
+    dispatcher = make_dispatcher(ipc, registry, tmp_path)
+
+    session_id = await dispatcher.dispatch(file_path)
+
     assert session_id is None
+    assert ipc.sent == []
     assert dispatcher._dispatched_sessions == {}
+
+
+async def test_unknown_sender_error_is_not_retried_and_removes_sender_from_registry(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "example.bin"
+    file_path.write_bytes(FILE_CONTENTS)
+
+    ipc = FakeIpcServer()
+    ipc.fail_next_send(SenderId(1), UnknownSenderError(SenderId(1)))
+    registry = make_registry(SenderId(0), SenderId(1), SenderId(2))
+    dispatcher = make_dispatcher(ipc, registry, tmp_path)
+
+    await dispatcher.dispatch(file_path)
+
+    # Only one attempt: UnknownSenderError means the peer is definitively
+    # gone, so it is not worth retrying.
+    assert {sender_id for sender_id, _ in ipc.sent} == {SenderId(0), SenderId(2)}
+    assert registry.active_senders() == [SenderId(0), SenderId(2)]
+
+
+async def test_send_queue_full_does_not_remove_sender_from_registry(tmp_path: Path) -> None:
+    file_path = tmp_path / "example.bin"
+    file_path.write_bytes(FILE_CONTENTS)
+
+    ipc = FakeIpcServer()
+    ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
+    ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
+    registry = make_registry(SenderId(0), SenderId(1), SenderId(2))
+    dispatcher = make_dispatcher(ipc, registry, tmp_path)
+
+    await dispatcher.dispatch(file_path)
+
+    # The peer is alive, just backed up — still registered for next time.
+    assert registry.active_senders() == [SenderId(0), SenderId(1), SenderId(2)]
+
+
+async def test_complete_session_removes_the_dispatched_session_entry(tmp_path: Path) -> None:
+    file_path = tmp_path / "example.bin"
+    file_path.write_bytes(FILE_CONTENTS)
+
+    ipc = FakeIpcServer()
+    registry = make_registry(SenderId(0))
+    dispatcher = make_dispatcher(ipc, registry, tmp_path)
+
+    session_id = await dispatcher.dispatch(file_path)
+    assert session_id is not None
+    assert session_id in dispatcher._dispatched_sessions
+
+    dispatcher.complete_session(session_id)
+
+    assert session_id not in dispatcher._dispatched_sessions
+
+
+def test_complete_session_on_an_unknown_session_id_does_not_raise() -> None:
+    ipc = FakeIpcServer()
+    registry = make_registry(SenderId(0))
+    dispatcher = SessionDispatcher(
+        ipc=ipc,
+        hasher=FakeHasher(),
+        registry=registry,
+        fec_params=ONE_BYTE_BLOCK_FEC,
+        watch_root=Path("/watch"),
+        target_host="10.0.0.1",
+        base_port=9000,
+    )
+
+    dispatcher.complete_session("never-dispatched")

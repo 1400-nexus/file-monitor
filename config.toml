@@ -14,3 +14,9 @@ rate_floor_bps = 5000000
 k = 200
 n = 255
 symbol_bytes = 1400
+
+[senders]
+target_host = "127.0.0.1"
+base_port = 9000
+binary_path = "./bin/nexus-sender"
+sender_count = 3
