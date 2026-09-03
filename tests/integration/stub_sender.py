@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import os
 import socket
 import sys
@@ -15,6 +16,8 @@ from file_monitor.ipc.constants import RECV_BUFFER_BYTES
 DEFAULT_PROTO_DIR = "libs/nexus-proto/proto"
 HEARTBEAT_INTERVAL_SECONDS = 1.0
 EDGE_ID_COUNT = 5
+REFUSAL_TIMEOUT_SECONDS = 2.0
+ASSIGN_JSON_MARKER = "ASSIGN "
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,7 +27,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sender-id", type=int, required=True)
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--proto-dir", type=Path, default=Path(DEFAULT_PROTO_DIR))
-    return parser.parse_args()
+    parser.add_argument(
+        "--json", action="store_true", help="also emit one ASSIGN <json> line per AssignSession"
+    )
+    parser.add_argument(
+        "--exit-after-assignments",
+        type=int,
+        default=None,
+        help="exit 0 after receiving this many AssignSession messages",
+    )
+    parser.add_argument(
+        "--expect-refused",
+        action="store_true",
+        help="exit 0 if the server refuses the handshake, exit 1 if it is accepted",
+    )
+    args = parser.parse_args()
+    if args.expect_refused and (args.json or args.exit_after_assignments is not None):
+        parser.error("--expect-refused cannot be combined with --json or --exit-after-assignments")
+    return args
 
 
 async def connect(socket_path: Path) -> socket.socket:
@@ -52,6 +72,18 @@ async def heartbeat_loop(client: socket.socket, sender_id: int) -> None:
         print(f"[sender {sender_id}] heartbeat sent", flush=True)
 
 
+def derive_blocks(assign_session: Any) -> list[int]:
+    manifest = assign_session.manifest
+    # This is the same residue arithmetic the C++ sender must perform on its
+    # own side; if the convention drifts between the two implementations,
+    # this is where it becomes visible.
+    return [
+        block_id
+        for block_id in range(manifest.total_blocks)
+        if block_id % assign_session.total_senders == manifest.sender_id
+    ]
+
+
 def print_assign_session(sender_id: int, assign_session: Any) -> None:
     manifest = assign_session.manifest
 
@@ -72,40 +104,78 @@ def print_assign_session(sender_id: int, assign_session: Any) -> None:
     print(f"  target_host   = {assign_session.target_host}")
     print(f"  target_port   = {assign_session.target_port}")
 
-    # This is the same residue arithmetic the C++ sender must perform on its
-    # own side; if the convention drifts between the two implementations,
-    # this is where it becomes visible.
-    blocks = [
-        block_id
-        for block_id in range(manifest.total_blocks)
-        if block_id % assign_session.total_senders == manifest.sender_id
-    ]
+    blocks = derive_blocks(assign_session)
     print(f"  block_count   = {len(blocks)}")
     print(f"  first blocks  = {blocks[:EDGE_ID_COUNT]}")
     print(f"  last blocks   = {blocks[-EDGE_ID_COUNT:]}")
 
 
+def emit_assign_session_json(sender_arg: int, assign_session: Any) -> None:
+    manifest = assign_session.manifest
+    payload = {
+        "sender_arg": sender_arg,
+        "session_id": manifest.session_id,
+        "filepath": manifest.filepath,
+        "file_size": manifest.file_size,
+        "total_blocks": manifest.total_blocks,
+        "k": manifest.k,
+        "n": manifest.n,
+        "block_bytes": manifest.block_bytes,
+        "shard_residue": manifest.sender_id,
+        "total_senders": assign_session.total_senders,
+        "target_host": assign_session.target_host,
+        "target_port": assign_session.target_port,
+        "blocks": derive_blocks(assign_session),
+    }
+    print(ASSIGN_JSON_MARKER + json.dumps(payload), flush=True)
+
+
 async def receive_loop(
-    client: socket.socket, sender_id: int, heartbeat_task: asyncio.Task[None]
-) -> None:
+    client: socket.socket,
+    sender_id: int,
+    heartbeat_task: asyncio.Task[None],
+    emit_json: bool,
+    exit_after_assignments: int | None,
+) -> int:
+    assignments_seen = 0
     try:
         loop = asyncio.get_running_loop()
         while True:
             raw = await loop.sock_recv(client, RECV_BUFFER_BYTES)
             if not raw:
                 print(f"[sender {sender_id}] connection closed by server", flush=True)
-                return
+                # Only a real failure if we were specifically waiting to see
+                # N assignments and the connection went away before that.
+                return 1 if exit_after_assignments is not None else 0
 
             field_name, message = codec.decode(raw)
-            if field_name == "assign_session":
-                print_assign_session(sender_id, cast(Any, message))
-            else:
+            if field_name != "assign_session":
                 print(f"[sender {sender_id}] received {field_name}: {message}", flush=True)
+                continue
+
+            assign_session = cast(Any, message)
+            print_assign_session(sender_id, assign_session)
+            if emit_json:
+                emit_assign_session_json(sender_id, assign_session)
+
+            assignments_seen += 1
+            if exit_after_assignments is not None and assignments_seen >= exit_after_assignments:
+                print(
+                    f"[sender {sender_id}] reached {exit_after_assignments} assignment(s), exiting",
+                    flush=True,
+                )
+                return 0
     finally:
         heartbeat_task.cancel()
 
 
-async def run(sender_id: int, socket_path: Path, proto_dir: Path) -> None:
+async def run(
+    sender_id: int,
+    socket_path: Path,
+    proto_dir: Path,
+    emit_json: bool,
+    exit_after_assignments: int | None,
+) -> int:
     proto_hash = handshake.compute_proto_hash(proto_dir)
     client = await connect(socket_path)
     try:
@@ -114,7 +184,42 @@ async def run(sender_id: int, socket_path: Path, proto_dir: Path) -> None:
 
         async with asyncio.TaskGroup() as task_group:
             heartbeat_task = task_group.create_task(heartbeat_loop(client, sender_id))
-            task_group.create_task(receive_loop(client, sender_id, heartbeat_task))
+            receive_task = task_group.create_task(
+                receive_loop(client, sender_id, heartbeat_task, emit_json, exit_after_assignments)
+            )
+        return receive_task.result()
+    finally:
+        client.close()
+
+
+async def run_expect_refused(sender_id: int, socket_path: Path, proto_dir: Path) -> int:
+    proto_hash = handshake.compute_proto_hash(proto_dir)
+    client = await connect(socket_path)
+    try:
+        await send_hello(client, sender_id, proto_hash)
+        loop = asyncio.get_running_loop()
+        try:
+            raw = await asyncio.wait_for(
+                loop.sock_recv(client, RECV_BUFFER_BYTES), timeout=REFUSAL_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            print(
+                f"[sender {sender_id}] not refused within {REFUSAL_TIMEOUT_SECONDS}s "
+                "-- connection accepted",
+                flush=True,
+            )
+            return 1
+
+        if raw == b"":
+            print(f"[sender {sender_id}] refused: connection closed by server", flush=True)
+            return 0
+
+        print(
+            f"[sender {sender_id}] not refused: received data instead of a closed connection: "
+            f"{raw!r}",
+            flush=True,
+        )
+        return 1
     finally:
         client.close()
 
@@ -124,12 +229,18 @@ def main() -> int:
     sender_id: int = args.sender_id
     socket_path: Path = args.socket
     proto_dir: Path = args.proto_dir
+    emit_json: bool = args.json
+    exit_after_assignments: int | None = args.exit_after_assignments
+    expect_refused: bool = args.expect_refused
 
     try:
-        asyncio.run(run(sender_id, socket_path, proto_dir))
+        if expect_refused:
+            return asyncio.run(run_expect_refused(sender_id, socket_path, proto_dir))
+        return asyncio.run(
+            run(sender_id, socket_path, proto_dir, emit_json, exit_after_assignments)
+        )
     except KeyboardInterrupt:
-        pass
-    return 0
+        return 0
 
 
 if __name__ == "__main__":
