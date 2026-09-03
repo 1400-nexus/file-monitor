@@ -15,8 +15,10 @@ from file_monitor.services.constants import (
 
 
 def generate_session_id() -> SessionId:
-    # Not a UUID: a 36-char UUID rides on every DataPacket and would leave
-    # too little MTU headroom after the rest of the packet header.
+    # 16 lowercase hex chars (8 random bytes), not a UUID: this value rides on
+    # every DataPacket on the wire (~978,000 packets per GB transferred), and
+    # a 36-character UUID would leave only ~9 bytes of MTU headroom after the
+    # rest of the packet header.
     return SessionId(secrets.token_hex(SESSION_ID_RANDOM_BYTES))
 
 
@@ -64,8 +66,10 @@ def build_manifest(
     if ".." in relative_path.parts:
         raise ValueError(f"source_file.path {source_file.path} escapes watch_root via '..'")
 
-    # RX joins this onto its own output directory: absolute or ".." would be
-    # a path-traversal write on the receiving machine.
+    # RX joins this onto its own output directory, so it must never be
+    # absolute and must never contain "..", or it could write outside that
+    # directory or leak the TX machine's directory layout. Always POSIX
+    # separators on the wire, regardless of the TX host's OS.
     filepath = relative_path.as_posix()
 
     manifest = common_pb2.Manifest(
