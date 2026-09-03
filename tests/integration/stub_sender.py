@@ -73,10 +73,8 @@ async def heartbeat_loop(client: socket.socket, sender_id: int) -> None:
 
 
 def derive_blocks(assign_session: Any) -> list[int]:
+    # The same residue arithmetic the C++ sender must independently perform.
     manifest = assign_session.manifest
-    # This is the same residue arithmetic the C++ sender must perform on its
-    # own side; if the convention drifts between the two implementations,
-    # this is where it becomes visible.
     return [
         block_id
         for block_id in range(manifest.total_blocks)
@@ -144,8 +142,6 @@ async def receive_loop(
             raw = await loop.sock_recv(client, RECV_BUFFER_BYTES)
             if not raw:
                 print(f"[sender {sender_id}] connection closed by server", flush=True)
-                # Only a real failure if we were specifically waiting to see
-                # N assignments and the connection went away before that.
                 return 1 if exit_after_assignments is not None else 0
 
             field_name, message = codec.decode(raw)

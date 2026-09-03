@@ -2,10 +2,9 @@ import asyncio
 
 import pytest
 
-# file_monitor.main transitively imports the inotify adapter, which requires
-# select.poll — unavailable on Windows. Skip this whole module there rather
-# than crashing collection, matching the platform-skip pattern already used
-# by tests/integration/test_uds.py for AF_UNIX.
+# file_monitor.main imports inotify_simple, which needs select.poll --
+# absent on Windows. exc_type=ImportError: the default only skips on
+# ModuleNotFoundError, which wouldn't catch this.
 main = pytest.importorskip("file_monitor.main", exc_type=ImportError)
 _cancel_workers_on_shutdown = main._cancel_workers_on_shutdown
 
@@ -17,11 +16,6 @@ async def _infinite_sleep() -> None:
 
 
 async def test_setting_the_shutdown_event_cancels_workers_and_group_exits_normally() -> None:
-    # Mirrors run()'s own TaskGroup shape: N worker tasks plus one task that
-    # waits on the shutdown event and cancels the others. Setting the event
-    # directly (no real signal) must let the `async with TaskGroup()` block
-    # exit normally, with every worker cancelled — this is the exact
-    # mechanism run() relies on to do its cleanup in a non-cancelled context.
     shutdown_event = asyncio.Event()
     reached_after_block = False
 

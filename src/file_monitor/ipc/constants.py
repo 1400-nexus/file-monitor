@@ -1,8 +1,5 @@
-# Comfortably above the largest Envelope seen today (AssignSession carrying a
-# Manifest, a few hundred bytes), leaving headroom for a future explicit
-# block-list shard (potentially several KB). SOCK_SEQPACKET silently discards
-# any part of a datagram beyond this size, so undersizing it produces
-# truncated frames that fail to parse with no indication of why.
+# SOCK_SEQPACKET silently truncates anything beyond this size with no error,
+# so it stays well above the largest Envelope seen today.
 RECV_BUFFER_BYTES = 65536
 
 SEND_QUEUE_MAXSIZE = 64

@@ -130,8 +130,6 @@ def test_senders_sender_count_cannot_be_negative(tmp_path: Path) -> None:
 
 
 def test_senders_sender_count_of_zero_is_accepted(tmp_path: Path) -> None:
-    # Means "supervise nothing" -- the sender binary lives in a different
-    # repo and won't exist in the file-monitor image.
     validate_config(make_config(tmp_path, sender_count=0))
 
 

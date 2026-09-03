@@ -41,8 +41,8 @@ class DirectoryWatcher:
             consumer_task.cancel()
             for pending_task in self._pending.values():
                 pending_task.cancel()
-            # Cancelling consumer_task can't interrupt a blocking read
-            # already running in a background thread; this can.
+            # consumer_task.cancel() alone can't interrupt a blocking read
+            # already running in a background thread.
             self._file_events.close()
 
     async def _consume_raw_events(self) -> None:

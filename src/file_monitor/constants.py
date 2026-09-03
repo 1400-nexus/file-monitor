@@ -33,10 +33,7 @@ BASE_PORT_KEY = "base_port"
 BINARY_PATH_KEY = "binary_path"
 SENDER_COUNT_KEY = "sender_count"
 
-# Every environment variable this service reads is namespaced NEXUS_, so it
-# can't collide with another process's variable of the same generic name
-# (WATCH_PATH, SOCKET_PATH, ...) once this runs in a shared compose stack
-# alongside session-manager, s3-sync, and MinIO.
+# NEXUS_-namespaced to avoid collisions in a shared compose stack.
 WATCH_PATH_ENV_VAR = "NEXUS_WATCH_PATH"
 SOCKET_PATH_ENV_VAR = "NEXUS_SOCKET_PATH"
 RATE_CEILING_BPS_ENV_VAR = "NEXUS_RATE_CEILING_BPS"

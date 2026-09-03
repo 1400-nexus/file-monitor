@@ -15,20 +15,12 @@ from file_monitor.services.constants import (
 
 
 def generate_session_id() -> SessionId:
-    # 16 lowercase hex chars (8 random bytes), not a UUID: this value rides on
-    # every DataPacket on the wire (~978,000 packets per GB transferred), and
-    # a 36-character UUID would leave only ~9 bytes of MTU headroom after the
-    # rest of the packet header.
+    # Not a UUID: a 36-char UUID rides on every DataPacket and would leave
+    # too little MTU headroom after the rest of the packet header.
     return SessionId(secrets.token_hex(SESSION_ID_RANDOM_BYTES))
 
 
 def apply_shard(manifest: common_pb2.Manifest, sender_index: int, shard_modulus: int) -> None:
-    # manifest.sender_id here is a shard RESIDUE, never the sender's process
-    # identity: the wire contract is block_id % shard_modulus == sender_id.
-    # This function is the one place that sets it, so when an explicit shard
-    # oneof replaces the implicit modulo, only this body changes — the
-    # signature stays put, so build_manifest and every other call site are
-    # unaffected.
     if shard_modulus < 1:
         raise ValueError(f"shard_modulus must be >= 1, got {shard_modulus}")
     if not 0 <= sender_index < shard_modulus:
@@ -48,9 +40,6 @@ def build_manifest(
     watch_root: Path,
     sender_bps_limit: int = UNSET_SENDER_BPS_LIMIT,
 ) -> common_pb2.Manifest:
-    """One session_id identifies one file transfer and is shared by every
-    sender assigned to that file; generate it once per file, not once per
-    sender."""
     if source_file.size_bytes < 0:
         raise ValueError(f"source_file.size_bytes must be >= 0, got {source_file.size_bytes}")
 
@@ -75,10 +64,8 @@ def build_manifest(
     if ".." in relative_path.parts:
         raise ValueError(f"source_file.path {source_file.path} escapes watch_root via '..'")
 
-    # RX joins this onto its own output directory, so it must never be
-    # absolute and must never contain "..", or it could write outside that
-    # directory or leak the TX machine's directory layout. Always POSIX
-    # separators on the wire, regardless of the TX host's OS.
+    # RX joins this onto its own output directory: absolute or ".." would be
+    # a path-traversal write on the receiving machine.
     filepath = relative_path.as_posix()
 
     manifest = common_pb2.Manifest(

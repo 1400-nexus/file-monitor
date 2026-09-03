@@ -1,10 +1,7 @@
-"""file_monitor is the sole authority on which blocks each sender transmits.
-
-A ShardAssignment's shard_residue is positional — it comes from enumerating
-the active sender list — and is NOT the sender's process id (SenderId). A
-sender must never derive its shard from its own process id; it must transmit
-exactly the blocks where block_id % shard_modulus == shard_residue, using the
-shard_modulus and shard_residue values it was explicitly given.
+"""ShardAssignment.shard_residue is positional (from enumerating active
+senders), never the sender's own SenderId: a sender transmits
+block_id % shard_modulus == shard_residue using the given values, not its
+own identity.
 """
 
 import math

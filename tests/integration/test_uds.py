@@ -198,9 +198,7 @@ async def test_a_write_failure_tears_down_the_whole_peer() -> None:
         await loop.sock_sendall(client_side, codec.encode(hello))
         await asyncio.wait_for(_wait_until(lambda: SenderId(1) in server._peers), timeout=1)
 
-        # Break only the server's write direction. client_side stays open and
-        # never sends anything more, so without the fix _handle_peer's
-        # sock_recv would never unblock on its own.
+        # Breaks only the write direction; client_side otherwise stays open.
         server_side.shutdown(socket.SHUT_WR)
 
         payload = codec.encode(ipc_pb2.Heartbeat(process_id=1, timestamp_unix_ms=1))

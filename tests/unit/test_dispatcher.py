@@ -45,9 +45,6 @@ def make_dispatcher(
 
 
 def blocks_from_sent(sent: list[tuple[SenderId, bytes]]) -> list[int]:
-    # Each sender receives at most one AssignSession per session: shard
-    # modulus/residue are planned once and only the send is retried, never
-    # the plan, so there is never a second, conflicting message to resolve.
     blocks: list[int] = []
     for _sender_id, payload in sent:
         field_name, message = codec.decode(payload)
@@ -111,14 +108,10 @@ async def test_transient_failure_recovers_on_retry_without_touching_other_sender
     session_id = await dispatcher.dispatch(file_path)
 
     assert session_id is not None
-    # Each sender receives exactly one message: the retry re-sends the SAME
-    # already-planned assignment to sender 1, it never re-plans shards or
-    # sends a second message to 0/2.
     assert len(ipc.sent) == 3
     assert {sender_id for sender_id, _ in ipc.sent} == {SenderId(0), SenderId(1), SenderId(2)}
     assert sorted(blocks_from_sent(ipc.sent)) == list(range(TOTAL_BLOCKS))
     assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(1), SenderId(2)]
-    # The retry genuinely waited for the queue to drain rather than spinning.
     assert clock.now() == DISPATCH_RETRY_DELAY_SECONDS
 
 
@@ -129,9 +122,6 @@ async def test_sender_that_exhausts_retries_is_lost_survivors_keep_original_shar
     file_path.write_bytes(FILE_CONTENTS)
 
     ipc = FakeIpcServer()
-    # Both of sender 1's attempts fail: its shard (residue 1 of modulus 3,
-    # planned from the original 3-sender set) is permanently lost, not
-    # redistributed to 0 or 2 — 0 and 2 keep their original assignments.
     ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
     ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
     registry = make_registry(SenderId(0), SenderId(1), SenderId(2))
@@ -156,8 +146,6 @@ async def test_sender_that_exhausts_retries_is_lost_survivors_keep_original_shar
     log_entry = partial_failure_logs[0]
     assert log_entry["session_id"] == session_id
     assert log_entry["failed_sender_ids"] == [SenderId(1)]
-    # A compact (residue, modulus, count) summary, not the block enumeration:
-    # residue 1 of modulus 3 identifies blocks {1, 4, 7} exactly.
     assert log_entry["lost_block_count"] == len(lost_blocks)
     assert log_entry["lost_shards"] == [
         {"sender_id": SenderId(1), "shard_residue": 1, "shard_modulus": 3, "block_count": 3}
@@ -195,8 +183,6 @@ async def test_unknown_sender_error_is_not_retried_and_removes_sender_from_regis
 
     await dispatcher.dispatch(file_path)
 
-    # Only one attempt: UnknownSenderError means the peer is definitively
-    # gone, so it is not worth retrying.
     assert {sender_id for sender_id, _ in ipc.sent} == {SenderId(0), SenderId(2)}
     assert registry.active_senders() == [SenderId(0), SenderId(2)]
 
@@ -213,7 +199,6 @@ async def test_send_queue_full_does_not_remove_sender_from_registry(tmp_path: Pa
 
     await dispatcher.dispatch(file_path)
 
-    # The peer is alive, just backed up — still registered for next time.
     assert registry.active_senders() == [SenderId(0), SenderId(1), SenderId(2)]
 
 

@@ -69,11 +69,10 @@ class SessionDispatcher:
         total_blocks: int,
         active_senders: list[SenderId],
     ) -> list[SenderId] | None:
-        # Every sender gets at most one AssignSession for this session_id —
-        # the wire contract doesn't say whether a later one supersedes an
-        # earlier one (flagged for the team, unsettled with the C++ side),
-        # so this never sends a second. A failed sender's shard is lost,
-        # not redistributed to survivors.
+        # Every sender gets at most one AssignSession per session_id: the
+        # wire contract doesn't say whether a later one supersedes an
+        # earlier one (flagged for the team). A failed sender's shard is
+        # lost, not redistributed to survivors.
         assignments = derive_shard_assignments(total_blocks, active_senders, self._base_port)
 
         succeeded: list[SenderId] = []
@@ -118,8 +117,6 @@ class SessionDispatcher:
     async def _deliver(
         self, session_id: SessionId, assignment: ShardAssignment, payload: bytes
     ) -> bool:
-        # SendQueueFullError is transient and worth retrying; UnknownSenderError
-        # means the peer is gone, so this assignment is abandoned immediately.
         for attempt in range(MAX_DISPATCH_ATTEMPTS):
             try:
                 await self._ipc.send(assignment.sender_id, payload)
@@ -141,9 +138,6 @@ class SessionDispatcher:
                     reason="send_queue_full",
                     error=str(error),
                 )
-                # send() enqueues via put_nowait and never awaits, so without
-                # this the retry runs in the same tick and can't observe a
-                # drained queue.
                 if attempt < MAX_DISPATCH_ATTEMPTS - 1:
                     await self._clock.sleep(DISPATCH_RETRY_DELAY_SECONDS)
                 continue
@@ -154,11 +148,8 @@ class SessionDispatcher:
     def _log_partial_failure(
         self, session_id: SessionId, lost_assignments: list[ShardAssignment]
     ) -> None:
-        # The full block-id enumeration can run into the thousands for a
-        # large file; (shard_residue, shard_modulus, block_count) identifies
-        # the same lost set exactly (block_id % modulus == residue) in three
-        # numbers, and on a link with no back channel this line is the only
-        # record of what was never transmitted.
+        # (shard_residue, shard_modulus, block_count) identifies the lost
+        # blocks exactly, without enumerating what could be thousands of ids.
         lost_block_count = sum(len(assignment.assigned_blocks) for assignment in lost_assignments)
         logger.error(
             "dispatch_partially_failed",

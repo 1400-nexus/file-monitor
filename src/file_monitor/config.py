@@ -106,9 +106,7 @@ def load_config(config_path: Path) -> AppConfig:
     with open(config_path, "rb") as file_handle:
         data = tomllib.load(file_handle)
 
-    # Relative paths are resolved against the config file's own directory,
-    # not the process's CWD, so behaviour doesn't depend on where the
-    # process was launched from.
+    # Not the process CWD: behaviour shouldn't depend on launch directory.
     config_dir = config_path.resolve().parent
 
     environment = os.environ

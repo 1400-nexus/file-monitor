@@ -9,11 +9,6 @@ POLL_TIMEOUT_SECONDS = 1
 
 
 class NeverResolvingClock:
-    # FakeClock.sleep() advances and returns with no internal suspension,
-    # which makes it useless for racing against shutdown (it always "wins"
-    # instantly, regardless of scheduling order — see the backoff-vs-shutdown
-    # test below). This clock's sleep() genuinely blocks until cancelled, so
-    # the only way out of it is the stop-event side of the race.
     def __init__(self) -> None:
         self._now: float = 0.0
         self.pending_sleeps: list[asyncio.Future[None]] = []
@@ -207,15 +202,11 @@ async def test_shutdown_during_backoff_window_exits_without_waiting_out_the_dela
         await _wait_for(lambda: len(spawner.spawned) >= 1)
         spawner.exit(spawner.spawned[0], 1)
 
-        # Child has observed the exit and is now parked in its (never
-        # resolving on its own) 30s backoff sleep.
         await _wait_for(lambda: len(clock.pending_sleeps) >= 1)
 
         await asyncio.wait_for(supervisor.shutdown(), timeout=POLL_TIMEOUT_SECONDS)
         await asyncio.wait_for(run_task, timeout=POLL_TIMEOUT_SECONDS)
 
-        # The backoff sleep was cancelled, never completed — it never got
-        # the chance to advance the clock by the 30s delay.
         assert clock.now() == 0.0
     finally:
         if not run_task.done():

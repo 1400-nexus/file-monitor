@@ -11,9 +11,6 @@ class FakeProcess:
         self.terminated: bool = False
         self.killed: bool = False
         self.exit_code: asyncio.Future[int] = asyncio.get_running_loop().create_future()
-        # Simulates the OS having already reclaimed this process (e.g. it
-        # exited and was reaped between a shutdown-time snapshot and the
-        # actual terminate()/kill()/wait() call).
         self.reaped: bool = False
 
 

@@ -31,10 +31,6 @@ class BlockPlan:
 
 @dataclass(frozen=True)
 class ShardAssignment:
-    # shard_modulus/shard_residue are the values the sender must use to derive
-    # its own blocks on the wire: block_id % shard_modulus == shard_residue.
-    # This is positional (assigned by file_monitor), not the sender's own
-    # process id — sender_id must never be substituted for shard_residue.
     sender_id: SenderId
     shard_modulus: int
     shard_residue: int
