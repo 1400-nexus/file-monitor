@@ -55,18 +55,22 @@ validated. Relative paths (`watch_path`, `socket_path`, `binary_path`) resolve
 against the *config file's own directory*, not the process's working
 directory.
 
+Every environment variable is namespaced `NEXUS_`, so it can't collide with
+another process's variable of the same generic name once this runs in a
+shared compose stack alongside session-manager, s3-sync, and MinIO.
+
 | Section.key | Env var | Default | Notes |
 |---|---|---|---|
-| `paths.watch_path` | `WATCH_PATH` | *(required)* | Created on startup if missing |
-| `paths.socket_path` | `SOCKET_PATH` | *(required)* | Unix Domain Socket, `SOCK_SEQPACKET` |
-| `pacing.rate_ceiling_bps` | `RATE_CEILING_BPS` | 20,000,000 | |
-| `pacing.rate_floor_bps` | `RATE_FLOOR_BPS` | 5,000,000 | |
-| `fec.k` / `fec.n` / `fec.symbol_bytes` | `FEC_K` / `FEC_N` / `FEC_SYMBOL_BYTES` | *(required)* | Cross-service contract with the C++ sender/receiver — never change unilaterally |
-| `senders.target_host` | `SENDERS_TARGET_HOST` | `127.0.0.1` | RX host senders transmit to |
-| `senders.base_port` | `SENDERS_BASE_PORT` | 9000 | First sender's port; `base_port + shard_residue` per sender |
-| `senders.binary_path` | `SENDERS_BINARY_PATH` | `./bin/nexus-sender` | Not shipped in this repo |
-| `senders.sender_count` | `SENDERS_SENDER_COUNT` | 0 | `0` = supervise nothing (no crash-loop when the binary is absent) |
-| — | `PROTO_CONTRACT_DIR` | `libs/nexus-proto/proto` | `.proto` source files hashed at startup for the handshake |
+| `paths.watch_path` | `NEXUS_WATCH_PATH` | *(required)* | Created on startup if missing |
+| `paths.socket_path` | `NEXUS_SOCKET_PATH` | *(required)* | Unix Domain Socket, `SOCK_SEQPACKET` |
+| `pacing.rate_ceiling_bps` | `NEXUS_RATE_CEILING_BPS` | 20,000,000 | |
+| `pacing.rate_floor_bps` | `NEXUS_RATE_FLOOR_BPS` | 5,000,000 | |
+| `fec.k` / `fec.n` / `fec.symbol_bytes` | `NEXUS_FEC_K` / `NEXUS_FEC_N` / `NEXUS_FEC_SYMBOL_BYTES` | *(required)* | Cross-service contract with the C++ sender/receiver — never change unilaterally |
+| `senders.target_host` | `NEXUS_SENDERS_TARGET_HOST` | `127.0.0.1` | RX host senders transmit to |
+| `senders.base_port` | `NEXUS_SENDERS_BASE_PORT` | 9000 | First sender's port; `base_port + shard_residue` per sender |
+| `senders.binary_path` | `NEXUS_SENDERS_BINARY_PATH` | `./bin/nexus-sender` | Not shipped in this repo |
+| `senders.sender_count` | `NEXUS_SENDERS_SENDER_COUNT` | 0 | `0` = supervise nothing (no crash-loop when the binary is absent) |
+| — | `NEXUS_PROTO_CONTRACT_DIR` | `libs/nexus-proto/proto` | `.proto` source files hashed at startup for the handshake |
 | — | `NEXUS_CONFIG` | `config.toml` | Which config file to load |
 
 `fec.*` and the proto contract are cross-service contracts: a mismatch does

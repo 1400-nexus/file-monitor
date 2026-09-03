@@ -11,9 +11,9 @@ services:
     # escalate to kill before docker falls back to SIGKILL.
     stop_grace_period: 30s
     environment:
-      WATCH_PATH: /var/nexus/watch
-      SOCKET_PATH: /run/nexus/file-monitor.sock
-      SENDERS_SENDER_COUNT: "0"
+      NEXUS_WATCH_PATH: /var/nexus/watch
+      NEXUS_SOCKET_PATH: /run/nexus/file-monitor.sock
+      NEXUS_SENDERS_SENDER_COUNT: "0"
     volumes:
       # Named volumes, not host bind mounts: a Windows host path can't back
       # a Unix Domain Socket, and inotify events don't propagate across

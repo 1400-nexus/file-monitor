@@ -28,8 +28,8 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY config.toml /etc/nexus/config.toml
-# main.py hashes the .proto SOURCE files at startup (PROTO_CONTRACT_DIR), not
-# the generated *_pb2.py -- without these the container exits immediately
+# main.py hashes the .proto SOURCE files at startup (NEXUS_PROTO_CONTRACT_DIR),
+# not the generated *_pb2.py -- without these the container exits immediately
 # with proto_contract_missing.
 COPY libs/nexus-proto/proto /etc/nexus/proto
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -38,14 +38,20 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN mkdir -p /run/nexus /var/nexus/watch && chown -R nexus:nexus /run/nexus /var/nexus
 
 ENV NEXUS_CONFIG=/etc/nexus/config.toml \
-    PROTO_CONTRACT_DIR=/etc/nexus/proto \
-    WATCH_PATH=/var/nexus/watch \
-    SOCKET_PATH=/run/nexus/file-monitor.sock \
+    NEXUS_PROTO_CONTRACT_DIR=/etc/nexus/proto \
+    NEXUS_WATCH_PATH=/var/nexus/watch \
+    NEXUS_SOCKET_PATH=/run/nexus/file-monitor.sock \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 USER nexus
 WORKDIR /var/nexus
+
+# The socket existing means the server has bound and is accepting
+# connections -- it does NOT mean any sender is connected, which is
+# deliberately not part of health.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD test -S "$NEXUS_SOCKET_PATH" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["python", "-m", "file_monitor.main"]
