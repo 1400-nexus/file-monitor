@@ -97,9 +97,19 @@ def _require(mapping: dict[str, Any], *keys: str) -> Any:
     return current
 
 
+def _resolve_path(base_dir: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else base_dir / path
+
+
 def load_config(config_path: Path) -> AppConfig:
     with open(config_path, "rb") as file_handle:
         data = tomllib.load(file_handle)
+
+    # Relative paths are resolved against the config file's own directory,
+    # not the process's CWD, so behaviour doesn't depend on where the
+    # process was launched from.
+    config_dir = config_path.resolve().parent
 
     environment = os.environ
     section_data_by_name = {
@@ -120,8 +130,8 @@ def load_config(config_path: Path) -> AppConfig:
 
     app_config = AppConfig(
         paths=PathsConfig(
-            watch_path=Path(_require(paths_data, WATCH_PATH_KEY)),
-            socket_path=Path(_require(paths_data, SOCKET_PATH_KEY)),
+            watch_path=_resolve_path(config_dir, str(_require(paths_data, WATCH_PATH_KEY))),
+            socket_path=_resolve_path(config_dir, str(_require(paths_data, SOCKET_PATH_KEY))),
         ),
         pacing=PacingConfig(
             rate_ceiling_bps=int(pacing_data.get(RATE_CEILING_BPS_KEY, DEFAULT_RATE_CEILING_BPS)),
@@ -135,7 +145,11 @@ def load_config(config_path: Path) -> AppConfig:
         senders=SendersConfig(
             target_host=str(senders_data.get(TARGET_HOST_KEY, DEFAULT_TARGET_HOST)),
             base_port=int(senders_data.get(BASE_PORT_KEY, DEFAULT_BASE_PORT)),
-            binary_path=str(senders_data.get(BINARY_PATH_KEY, DEFAULT_SENDER_BINARY_PATH)),
+            binary_path=str(
+                _resolve_path(
+                    config_dir, str(senders_data.get(BINARY_PATH_KEY, DEFAULT_SENDER_BINARY_PATH))
+                )
+            ),
             sender_count=int(senders_data.get(SENDER_COUNT_KEY, DEFAULT_SENDER_COUNT)),
         ),
     )
@@ -181,9 +195,9 @@ def validate_config(app_config: AppConfig) -> None:
     if not app_config.senders.binary_path:
         raise ValueError("senders.binary_path must not be empty")
 
-    if app_config.senders.sender_count < 1:
+    if app_config.senders.sender_count < 0:
         raise ValueError(
-            f"senders.sender_count must be >= 1, got {app_config.senders.sender_count}"
+            f"senders.sender_count must be >= 0, got {app_config.senders.sender_count}"
         )
 
     if not (MIN_PORT <= app_config.senders.base_port <= MAX_PORT):

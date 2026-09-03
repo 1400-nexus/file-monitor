@@ -4,6 +4,7 @@ from pathlib import Path
 import common_pb2
 import ipc_pb2
 
+from file_monitor.domain.ids import SessionId
 from file_monitor.domain.models import FecParams, SourceFile
 from file_monitor.domain.planning import calculate_block_count
 from file_monitor.services.constants import (
@@ -13,12 +14,12 @@ from file_monitor.services.constants import (
 )
 
 
-def generate_session_id() -> str:
+def generate_session_id() -> SessionId:
     # 16 lowercase hex chars (8 random bytes), not a UUID: this value rides on
     # every DataPacket on the wire (~978,000 packets per GB transferred), and
     # a 36-character UUID would leave only ~9 bytes of MTU headroom after the
     # rest of the packet header.
-    return secrets.token_hex(SESSION_ID_RANDOM_BYTES)
+    return SessionId(secrets.token_hex(SESSION_ID_RANDOM_BYTES))
 
 
 def apply_shard(manifest: common_pb2.Manifest, sender_index: int, shard_modulus: int) -> None:
@@ -41,7 +42,7 @@ def apply_shard(manifest: common_pb2.Manifest, sender_index: int, shard_modulus:
 def build_manifest(
     source_file: SourceFile,
     fec_params: FecParams,
-    session_id: str,
+    session_id: SessionId,
     sender_index: int,
     shard_modulus: int,
     watch_root: Path,

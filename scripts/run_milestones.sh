@@ -470,8 +470,6 @@ for sender_id in (0, 1, 2):
     if disconnected:
         print(f"FAIL: sender {sender_id} was disconnected, should have stayed healthy")
         sys.exit(1)
-
-print("milestone 3: log assertions passed")
 PYEOF
     if [ "$?" -ne 0 ]; then
         ok=1
@@ -486,6 +484,10 @@ PYEOF
     if ! kill -0 "$MONITOR_PID" >/dev/null 2>&1; then
         echo "FAIL: file-monitor process is no longer running"
         ok=1
+    fi
+
+    if [ "$ok" -eq 0 ]; then
+        echo "milestone 3: all assertions passed"
     fi
 
     set -e

@@ -15,8 +15,12 @@ k = 200
 n = 255
 symbol_bytes = 1400
 
+# sender_count = 0 means "supervise nothing" -- the C++ sender binary lives
+# in a different repo and won't exist here until it's built or mounted.
+# ProcessSupervisor.run() is then a clean no-op instead of spawn-failing in
+# a loop. Raise sender_count once a real binary_path is available.
 [senders]
 target_host = "127.0.0.1"
 base_port = 9000
 binary_path = "./bin/nexus-sender"
-sender_count = 3
+sender_count = 0

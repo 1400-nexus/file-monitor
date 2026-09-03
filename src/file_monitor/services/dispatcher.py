@@ -2,7 +2,7 @@ from pathlib import Path
 
 import structlog
 
-from file_monitor.domain.ids import SenderId
+from file_monitor.domain.ids import SenderId, SessionId
 from file_monitor.domain.models import FecParams, ShardAssignment, SourceFile
 from file_monitor.domain.planning import calculate_block_count, derive_shard_assignments
 from file_monitor.ipc import codec
@@ -35,9 +35,9 @@ class SessionDispatcher:
         self._watch_root: Path = watch_root
         self._target_host: str = target_host
         self._base_port: int = base_port
-        self._dispatched_sessions: dict[str, list[SenderId]] = {}
+        self._dispatched_sessions: dict[SessionId, list[SenderId]] = {}
 
-    async def dispatch(self, path: Path) -> str | None:
+    async def dispatch(self, path: Path) -> SessionId | None:
         size_bytes = path.stat().st_size
         file_hash = await self._hasher.compute_hash(path)
         source_file = SourceFile(path=path, size_bytes=size_bytes, file_hash=file_hash)
@@ -59,12 +59,12 @@ class SessionDispatcher:
         self._dispatched_sessions[session_id] = succeeded_sender_ids
         return session_id
 
-    def complete_session(self, session_id: str) -> None:
+    def complete_session(self, session_id: SessionId) -> None:
         self._dispatched_sessions.pop(session_id, None)
 
     async def _send_to_senders(
         self,
-        session_id: str,
+        session_id: SessionId,
         source_file: SourceFile,
         total_blocks: int,
         active_senders: list[SenderId],
@@ -115,7 +115,9 @@ class SessionDispatcher:
 
         return succeeded or None
 
-    async def _deliver(self, session_id: str, assignment: ShardAssignment, payload: bytes) -> bool:
+    async def _deliver(
+        self, session_id: SessionId, assignment: ShardAssignment, payload: bytes
+    ) -> bool:
         # SendQueueFullError is transient and worth retrying; UnknownSenderError
         # means the peer is gone, so this assignment is abandoned immediately.
         for attempt in range(MAX_DISPATCH_ATTEMPTS):
@@ -150,7 +152,7 @@ class SessionDispatcher:
         return False
 
     def _log_partial_failure(
-        self, session_id: str, lost_assignments: list[ShardAssignment]
+        self, session_id: SessionId, lost_assignments: list[ShardAssignment]
     ) -> None:
         # The full block-id enumeration can run into the thousands for a
         # large file; (shard_residue, shard_modulus, block_count) identifies

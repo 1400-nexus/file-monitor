@@ -1,0 +1,26 @@
+services:
+  file-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # This process spawns children (sender processes, once a real binary is
+    # configured); PID 1 in a container does no SIGCHLD reaping on its own,
+    # so zombies would otherwise accumulate silently.
+    init: true
+    # Long enough for supervisor.shutdown() to terminate children and
+    # escalate to kill before docker falls back to SIGKILL.
+    stop_grace_period: 30s
+    environment:
+      WATCH_PATH: /var/nexus/watch
+      SOCKET_PATH: /run/nexus/file-monitor.sock
+      SENDERS_SENDER_COUNT: "0"
+    volumes:
+      # Named volumes, not host bind mounts: a Windows host path can't back
+      # a Unix Domain Socket, and inotify events don't propagate across
+      # that boundary either.
+      - watch-data:/var/nexus/watch
+      - run-data:/run/nexus
+
+volumes:
+  watch-data:
+  run-data:

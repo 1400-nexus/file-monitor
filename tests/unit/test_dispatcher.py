@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import structlog.testing
 
-from file_monitor.domain.ids import SenderId
+from file_monitor.domain.ids import SenderId, SessionId
 from file_monitor.domain.models import FecParams
 from file_monitor.ipc import codec
 from file_monitor.ipc.errors import SendQueueFullError, UnknownSenderError
@@ -248,4 +248,4 @@ def test_complete_session_on_an_unknown_session_id_does_not_raise() -> None:
         base_port=9000,
     )
 
-    dispatcher.complete_session("never-dispatched")
+    dispatcher.complete_session(SessionId("never-dispatched"))

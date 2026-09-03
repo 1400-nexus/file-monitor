@@ -233,3 +233,13 @@ async def test_shutdown_tolerates_a_process_the_os_already_reaped() -> None:
     supervisor._processes["ghost"] = ghost
 
     await asyncio.wait_for(supervisor.shutdown(), timeout=POLL_TIMEOUT_SECONDS)
+
+
+async def test_run_with_no_specs_is_a_clean_noop() -> None:
+    spawner = FakeSpawner()
+    clock = FakeClock()
+    supervisor: ProcessSupervisor[FakeProcess] = ProcessSupervisor([], spawner, clock)
+
+    await asyncio.wait_for(supervisor.run(), timeout=POLL_TIMEOUT_SECONDS)
+
+    assert spawner.spawned == []

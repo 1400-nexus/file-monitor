@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS builder
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /build
+COPY pyproject.toml ./
+COPY src ./src
+COPY config.toml ./
+COPY libs/nexus-proto ./libs/nexus-proto
+
+# libs/nexus-proto/generated/python must be present at build time: hatchling
+# force-includes it into the wheel at the sys.path root (see pyproject.toml),
+# since the generated modules are flat (ipc_pb2.py does `import common_pb2`)
+# and must never end up nested inside a package.
+RUN uv pip install --system --no-cache .
+# uv is a build tool, not a runtime dependency -- remove it so the wholesale
+# /usr/local/bin copy below doesn't carry it into the runtime image.
+RUN pip uninstall -y uv
+
+
+FROM python:3.12-slim AS runtime
+
+RUN groupadd --gid 10001 nexus \
+    && useradd --uid 10001 --gid nexus --no-create-home --shell /usr/sbin/nologin nexus
+
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+COPY config.toml /etc/nexus/config.toml
+# main.py hashes the .proto SOURCE files at startup (PROTO_CONTRACT_DIR), not
+# the generated *_pb2.py -- without these the container exits immediately
+# with proto_contract_missing.
+COPY libs/nexus-proto/proto /etc/nexus/proto
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+RUN mkdir -p /run/nexus /var/nexus/watch && chown -R nexus:nexus /run/nexus /var/nexus
+
+ENV NEXUS_CONFIG=/etc/nexus/config.toml \
+    PROTO_CONTRACT_DIR=/etc/nexus/proto \
+    WATCH_PATH=/var/nexus/watch \
+    SOCKET_PATH=/run/nexus/file-monitor.sock \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER nexus
+WORKDIR /var/nexus
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["python", "-m", "file_monitor.main"]

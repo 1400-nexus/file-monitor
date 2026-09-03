@@ -48,6 +48,9 @@ class ProcessSupervisor(Generic[ProcessHandle]):
         self._stop_event: asyncio.Event = asyncio.Event()
 
     async def run(self) -> None:
+        if not self._specs:
+            logger.info("supervisor_has_no_children_to_manage")
+            return
         async with asyncio.TaskGroup() as task_group:
             for spec in self._specs:
                 task_group.create_task(self._supervise_child(spec))

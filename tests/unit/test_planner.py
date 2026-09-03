@@ -4,6 +4,7 @@ from pathlib import Path
 import common_pb2
 import pytest
 
+from file_monitor.domain.ids import SessionId
 from file_monitor.domain.models import FecParams, SourceFile
 from file_monitor.services.constants import SESSION_ID_RANDOM_BYTES, UNSET_SENDER_BPS_LIMIT
 from file_monitor.services.planner import (
@@ -17,6 +18,7 @@ SESSION_ID_HEX_PATTERN = re.compile(r"^[0-9a-f]+$")
 VALID_FILE_HASH = "ab" * 32
 WATCH_ROOT = Path("/watch")
 ONE_BYTE_BLOCK_FEC = FecParams(k=1, n=1, symbol_bytes=1)
+PLACEHOLDER_SESSION_ID = SessionId("0" * 16)
 
 
 def make_source_file(
@@ -84,7 +86,7 @@ def test_build_manifest_populates_fields() -> None:
     manifest = build_manifest(
         source_file,
         ONE_BYTE_BLOCK_FEC,
-        session_id="0123456789abcdef",
+        session_id=SessionId("0123456789abcdef"),
         sender_index=1,
         shard_modulus=3,
         watch_root=WATCH_ROOT,
@@ -109,7 +111,7 @@ def test_build_manifest_accepts_an_explicit_sender_bps_limit() -> None:
     manifest = build_manifest(
         source_file,
         ONE_BYTE_BLOCK_FEC,
-        session_id="0" * 16,
+        session_id=PLACEHOLDER_SESSION_ID,
         sender_index=0,
         shard_modulus=1,
         watch_root=WATCH_ROOT,
@@ -125,7 +127,7 @@ def test_build_manifest_rejects_out_of_range_sender_index() -> None:
         build_manifest(
             source_file,
             ONE_BYTE_BLOCK_FEC,
-            session_id="0" * 16,
+            session_id=PLACEHOLDER_SESSION_ID,
             sender_index=7,
             shard_modulus=3,
             watch_root=WATCH_ROOT,
@@ -138,7 +140,7 @@ def test_build_manifest_rejects_non_positive_shard_modulus() -> None:
         build_manifest(
             source_file,
             ONE_BYTE_BLOCK_FEC,
-            session_id="0" * 16,
+            session_id=PLACEHOLDER_SESSION_ID,
             sender_index=0,
             shard_modulus=0,
             watch_root=WATCH_ROOT,
@@ -151,7 +153,7 @@ def test_build_manifest_rejects_negative_size_bytes() -> None:
         build_manifest(
             source_file,
             ONE_BYTE_BLOCK_FEC,
-            session_id="0" * 16,
+            session_id=PLACEHOLDER_SESSION_ID,
             sender_index=0,
             shard_modulus=1,
             watch_root=WATCH_ROOT,
@@ -164,7 +166,7 @@ def test_build_manifest_rejects_wrong_length_file_hash() -> None:
         build_manifest(
             source_file,
             ONE_BYTE_BLOCK_FEC,
-            session_id="0" * 16,
+            session_id=PLACEHOLDER_SESSION_ID,
             sender_index=0,
             shard_modulus=1,
             watch_root=WATCH_ROOT,
@@ -177,7 +179,7 @@ def test_build_manifest_rejects_non_hex_file_hash() -> None:
         build_manifest(
             source_file,
             ONE_BYTE_BLOCK_FEC,
-            session_id="0" * 16,
+            session_id=PLACEHOLDER_SESSION_ID,
             sender_index=0,
             shard_modulus=1,
             watch_root=WATCH_ROOT,
@@ -192,7 +194,7 @@ def test_build_manifest_rejects_a_path_outside_watch_root() -> None:
         build_manifest(
             source_file,
             ONE_BYTE_BLOCK_FEC,
-            session_id="0" * 16,
+            session_id=PLACEHOLDER_SESSION_ID,
             sender_index=0,
             shard_modulus=1,
             watch_root=WATCH_ROOT,

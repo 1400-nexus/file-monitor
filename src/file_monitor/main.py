@@ -18,10 +18,11 @@ from file_monitor.config import AppConfig, load_config
 from file_monitor.constants import (
     CONFIG_ERROR_EXIT_CODE,
     DEFAULT_CONFIG_PATH,
+    DEFAULT_PROTO_CONTRACT_DIR,
     NEXUS_CONFIG_ENV_VAR,
-    PROTO_CONTRACT_DIR,
+    PROTO_CONTRACT_DIR_ENV_VAR,
 )
-from file_monitor.domain.ids import SenderId
+from file_monitor.domain.ids import SenderId, SessionId
 from file_monitor.ipc import codec, handshake
 from file_monitor.ipc.constants import (
     HEARTBEAT_FIELD_NAME,
@@ -59,10 +60,9 @@ def _handle_session_complete(
     registry: SenderRegistry, dispatcher: SessionDispatcher, sender_id: SenderId, message: Message
 ) -> None:
     session_complete = cast(ipc_pb2.SessionComplete, message)
-    dispatcher.complete_session(session_complete.session_id)
-    logger.info(
-        SESSION_COMPLETE_FIELD_NAME, sender_id=sender_id, session_id=session_complete.session_id
-    )
+    session_id = SessionId(session_complete.session_id)
+    dispatcher.complete_session(session_id)
+    logger.info(SESSION_COMPLETE_FIELD_NAME, sender_id=sender_id, session_id=session_id)
 
 
 def _make_log_and_ignore_handler(event_name: str) -> IncomingMessageHandler:
@@ -128,7 +128,7 @@ def _build_sender_specs(config: AppConfig) -> list[ChildSpec]:
 
 
 async def run(config: AppConfig) -> int:
-    proto_dir = Path(PROTO_CONTRACT_DIR)
+    proto_dir = Path(os.environ.get(PROTO_CONTRACT_DIR_ENV_VAR, DEFAULT_PROTO_CONTRACT_DIR))
     if not proto_dir.is_dir():
         logger.error(
             "proto_contract_missing",

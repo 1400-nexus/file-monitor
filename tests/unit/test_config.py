@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from file_monitor.config import AppConfig, PacingConfig, PathsConfig, SendersConfig, validate_config
+from file_monitor.config import (
+    AppConfig,
+    PacingConfig,
+    PathsConfig,
+    SendersConfig,
+    load_config,
+    validate_config,
+)
 from file_monitor.constants import (
     DEFAULT_BASE_PORT,
     DEFAULT_RATE_CEILING_BPS,
@@ -12,8 +19,20 @@ from file_monitor.constants import (
     DEFAULT_TARGET_HOST,
     GF256_MAX_SHARES,
     MAX_SYMBOL_BYTES,
+    WATCH_PATH_ENV_VAR,
 )
 from file_monitor.domain.models import FecParams
+
+MINIMAL_CONFIG_TOML = """
+[paths]
+watch_path = "./watch"
+socket_path = "./run/file-monitor.sock"
+
+[fec]
+k = 1
+n = 2
+symbol_bytes = 1
+"""
 
 
 def make_config(
@@ -104,10 +123,16 @@ def test_senders_binary_path_must_not_be_empty(tmp_path: Path) -> None:
         validate_config(app_config)
 
 
-def test_senders_sender_count_must_be_at_least_one(tmp_path: Path) -> None:
-    app_config = make_config(tmp_path, sender_count=0)
+def test_senders_sender_count_cannot_be_negative(tmp_path: Path) -> None:
+    app_config = make_config(tmp_path, sender_count=-1)
     with pytest.raises(ValueError, match="senders.sender_count"):
         validate_config(app_config)
+
+
+def test_senders_sender_count_of_zero_is_accepted(tmp_path: Path) -> None:
+    # Means "supervise nothing" -- the sender binary lives in a different
+    # repo and won't exist in the file-monitor image.
+    validate_config(make_config(tmp_path, sender_count=0))
 
 
 def test_senders_base_port_below_range_is_rejected(tmp_path: Path) -> None:
@@ -125,3 +150,53 @@ def test_senders_base_port_above_range_is_rejected(tmp_path: Path) -> None:
 def test_senders_base_port_at_range_edges_is_accepted(tmp_path: Path) -> None:
     validate_config(make_config(tmp_path, base_port=1))
     validate_config(make_config(tmp_path / "other", base_port=65535))
+
+
+def test_load_config_resolves_relative_paths_against_config_file_directory(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "etc"
+    config_dir.mkdir()
+    config_path = config_dir / "config.toml"
+    config_path.write_text(MINIMAL_CONFIG_TOML)
+
+    app_config = load_config(config_path)
+
+    assert app_config.paths.watch_path == config_dir / "watch"
+    assert app_config.paths.socket_path == config_dir / "run" / "file-monitor.sock"
+    assert Path(app_config.senders.binary_path) == config_dir / "bin" / "nexus-sender"
+
+
+def test_load_config_leaves_absolute_paths_untouched(tmp_path: Path) -> None:
+    config_dir = tmp_path / "etc"
+    config_dir.mkdir()
+    config_path = config_dir / "config.toml"
+    absolute_watch = tmp_path / "var" / "nexus" / "watch"
+    config_path.write_text(f"""
+[paths]
+watch_path = "{absolute_watch.as_posix()}"
+socket_path = "./run/file-monitor.sock"
+
+[fec]
+k = 1
+n = 2
+symbol_bytes = 1
+""")
+
+    app_config = load_config(config_path)
+
+    assert app_config.paths.watch_path == absolute_watch
+
+
+def test_load_config_resolves_a_relative_env_override_against_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "etc"
+    config_dir.mkdir()
+    config_path = config_dir / "config.toml"
+    config_path.write_text(MINIMAL_CONFIG_TOML)
+    monkeypatch.setenv(WATCH_PATH_ENV_VAR, "./overridden-watch")
+
+    app_config = load_config(config_path)
+
+    assert app_config.paths.watch_path == config_dir / "overridden-watch"
