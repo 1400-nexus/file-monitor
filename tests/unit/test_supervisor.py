@@ -44,6 +44,25 @@ async def test_child_restarts_on_exact_backoff_schedule() -> None:
         await asyncio.gather(run_task, return_exceptions=True)
 
 
+async def test_a_spawn_failure_is_treated_like_a_crash_and_retried() -> None:
+    spec = ChildSpec(name="worker", argv=["missing-binary"])
+    spawner = FakeSpawner()
+    clock = FakeClock()
+    supervisor = ProcessSupervisor([spec], spawner, clock, backoff_schedule=(1.0,))
+
+    spawner.fail_next_spawn(FileNotFoundError("missing-binary"))
+
+    run_task = asyncio.create_task(supervisor.run())
+    try:
+        await _wait_for(lambda: clock.now() == 1.0)
+        await _wait_for(lambda: len(spawner.spawned) >= 1)
+        assert not run_task.done()
+    finally:
+        await supervisor.shutdown()
+        run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+
 async def test_five_rapid_deaths_produce_degraded_and_stop_restarts() -> None:
     spec = ChildSpec(name="crashy", argv=["crashy"])
     spawner = FakeSpawner()

@@ -38,3 +38,13 @@ FEC_SYMBOL_BYTES_ENV_VAR = "FEC_SYMBOL_BYTES"
 
 NEXUS_CONFIG_ENV_VAR = "NEXUS_CONFIG"
 DEFAULT_CONFIG_PATH = "config.toml"
+
+PROTO_CONTRACT_DIR = "libs/nexus-proto/proto"
+
+# Placeholder composition-root wiring: no config field or real sender binary
+# exists yet for these. Replace once per-deployment sender configuration and
+# the C++ sender binary are available.
+SENDER_COUNT = 3
+SENDER_BINARY_PATH = "./bin/nexus-sender"
+DEFAULT_TARGET_HOST = "127.0.0.1"
+DEFAULT_BASE_PORT = 9000

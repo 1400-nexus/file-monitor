@@ -1,4 +1,5 @@
 MISSED_HEARTBEAT_LIMIT = 3
+HEARTBEAT_INTERVAL_SECONDS = 5.0
 DEBOUNCE_SECONDS = 0.2
 
 # One initial send attempt plus one retry after dropping any sender that

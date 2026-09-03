@@ -41,6 +41,12 @@ class DirectoryWatcher:
             consumer_task.cancel()
             for pending_task in self._pending.values():
                 pending_task.cancel()
+            # Unblocks the underlying adapter's blocking read (e.g. inotify's
+            # asyncio.to_thread call) — cancelling this task alone cannot
+            # interrupt a syscall already blocked in a background thread, and
+            # that thread staying alive is what prevents the interpreter from
+            # exiting.
+            self._file_events.close()
 
     async def _consume_raw_events(self) -> None:
         async for path in self._file_events.listen():

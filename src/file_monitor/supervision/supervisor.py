@@ -60,11 +60,15 @@ class ProcessSupervisor:
 
         while not self._stopping:
             started_at = self._clock.now()
-            process = await self._spawner.spawn(spec.argv, spec.env)
-            self._processes[spec.name] = process
-
-            exit_code = await self._spawner.wait(process)
-            self._processes.pop(spec.name, None)
+            try:
+                process = await self._spawner.spawn(spec.argv, spec.env)
+            except OSError as error:
+                logger.error("child_spawn_failed", name=spec.name, error=str(error))
+                exit_code = None
+            else:
+                self._processes[spec.name] = process
+                exit_code = await self._spawner.wait(process)
+                self._processes.pop(spec.name, None)
 
             if self._stopping:
                 return

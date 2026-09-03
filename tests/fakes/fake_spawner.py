@@ -17,8 +17,14 @@ class FakeProcess:
 class FakeSpawner:
     def __init__(self) -> None:
         self.spawned: list[FakeProcess] = []
+        self._pending_spawn_errors: list[OSError] = []
+
+    def fail_next_spawn(self, error: OSError) -> None:
+        self._pending_spawn_errors.append(error)
 
     async def spawn(self, argv: Sequence[str], env: dict[str, str] | None = None) -> FakeProcess:
+        if self._pending_spawn_errors:
+            raise self._pending_spawn_errors.pop(0)
         process = FakeProcess(argv, env)
         self.spawned.append(process)
         return process

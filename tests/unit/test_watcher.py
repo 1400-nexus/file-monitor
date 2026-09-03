@@ -75,6 +75,20 @@ async def test_events_after_settling_each_produce_their_own_output() -> None:
     assert second == path
 
 
+async def test_cancelling_the_listener_closes_the_underlying_file_events() -> None:
+    watcher, file_events = make_watcher()
+    listener = watcher.listen()
+
+    task = asyncio.ensure_future(anext(listener))
+    await asyncio.sleep(0)
+    assert not file_events.closed
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert file_events.closed
+
+
 async def test_consumer_failure_propagates_instead_of_hanging() -> None:
     watcher, file_events = make_watcher()
     listener = watcher.listen()
