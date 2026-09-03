@@ -151,6 +151,7 @@ async def run(config: AppConfig) -> int:
         ipc=ipc,
         hasher=hasher,
         registry=registry,
+        clock=clock,
         fec_params=config.fec,
         watch_root=config.paths.watch_path,
         target_host=config.senders.target_host,

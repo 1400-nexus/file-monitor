@@ -2,14 +2,14 @@ from pathlib import Path
 
 import structlog
 
-from file_monitor.domain.ids import BlockId, SenderId
+from file_monitor.domain.ids import SenderId
 from file_monitor.domain.models import FecParams, ShardAssignment, SourceFile
 from file_monitor.domain.planning import calculate_block_count, derive_shard_assignments
 from file_monitor.ipc import codec
 from file_monitor.ipc.errors import SendQueueFullError, UnknownSenderError
-from file_monitor.ports.protocols import Hasher, IpcServer
+from file_monitor.ports.protocols import Clock, Hasher, IpcServer
 from file_monitor.services import planner
-from file_monitor.services.constants import MAX_DISPATCH_ATTEMPTS
+from file_monitor.services.constants import DISPATCH_RETRY_DELAY_SECONDS, MAX_DISPATCH_ATTEMPTS
 from file_monitor.services.registry import SenderRegistry
 
 logger = structlog.get_logger(__name__)
@@ -21,6 +21,7 @@ class SessionDispatcher:
         ipc: IpcServer,
         hasher: Hasher,
         registry: SenderRegistry,
+        clock: Clock,
         fec_params: FecParams,
         watch_root: Path,
         target_host: str,
@@ -29,6 +30,7 @@ class SessionDispatcher:
         self._ipc: IpcServer = ipc
         self._hasher: Hasher = hasher
         self._registry: SenderRegistry = registry
+        self._clock: Clock = clock
         self._fec_params: FecParams = fec_params
         self._watch_root: Path = watch_root
         self._target_host: str = target_host
@@ -116,7 +118,7 @@ class SessionDispatcher:
     async def _deliver(self, session_id: str, assignment: ShardAssignment, payload: bytes) -> bool:
         # SendQueueFullError is transient and worth retrying; UnknownSenderError
         # means the peer is gone, so this assignment is abandoned immediately.
-        for _attempt in range(MAX_DISPATCH_ATTEMPTS):
+        for attempt in range(MAX_DISPATCH_ATTEMPTS):
             try:
                 await self._ipc.send(assignment.sender_id, payload)
             except UnknownSenderError as error:
@@ -137,6 +139,11 @@ class SessionDispatcher:
                     reason="send_queue_full",
                     error=str(error),
                 )
+                # send() enqueues via put_nowait and never awaits, so without
+                # this the retry runs in the same tick and can't observe a
+                # drained queue.
+                if attempt < MAX_DISPATCH_ATTEMPTS - 1:
+                    await self._clock.sleep(DISPATCH_RETRY_DELAY_SECONDS)
                 continue
             else:
                 return True
@@ -145,12 +152,24 @@ class SessionDispatcher:
     def _log_partial_failure(
         self, session_id: str, lost_assignments: list[ShardAssignment]
     ) -> None:
-        lost_block_ids: list[BlockId] = [
-            block_id for assignment in lost_assignments for block_id in assignment.assigned_blocks
-        ]
+        # The full block-id enumeration can run into the thousands for a
+        # large file; (shard_residue, shard_modulus, block_count) identifies
+        # the same lost set exactly (block_id % modulus == residue) in three
+        # numbers, and on a link with no back channel this line is the only
+        # record of what was never transmitted.
+        lost_block_count = sum(len(assignment.assigned_blocks) for assignment in lost_assignments)
         logger.error(
             "dispatch_partially_failed",
             session_id=session_id,
             failed_sender_ids=[assignment.sender_id for assignment in lost_assignments],
-            lost_block_ids=lost_block_ids,
+            lost_block_count=lost_block_count,
+            lost_shards=[
+                {
+                    "sender_id": assignment.sender_id,
+                    "shard_residue": assignment.shard_residue,
+                    "shard_modulus": assignment.shard_modulus,
+                    "block_count": len(assignment.assigned_blocks),
+                }
+                for assignment in lost_assignments
+            ],
         )

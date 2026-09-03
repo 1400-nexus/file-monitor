@@ -1,10 +1,13 @@
 from pathlib import Path
 from typing import Any, cast
 
+import structlog.testing
+
 from file_monitor.domain.ids import SenderId
 from file_monitor.domain.models import FecParams
 from file_monitor.ipc import codec
 from file_monitor.ipc.errors import SendQueueFullError, UnknownSenderError
+from file_monitor.services.constants import DISPATCH_RETRY_DELAY_SECONDS
 from file_monitor.services.dispatcher import SessionDispatcher
 from file_monitor.services.registry import SenderRegistry
 from tests.fakes.fake_clock import FakeClock
@@ -24,12 +27,16 @@ def make_registry(*sender_ids: SenderId) -> SenderRegistry:
 
 
 def make_dispatcher(
-    ipc: FakeIpcServer, registry: SenderRegistry, watch_root: Path
+    ipc: FakeIpcServer,
+    registry: SenderRegistry,
+    watch_root: Path,
+    clock: FakeClock | None = None,
 ) -> SessionDispatcher:
     return SessionDispatcher(
         ipc=ipc,
         hasher=FakeHasher(),
         registry=registry,
+        clock=clock if clock is not None else FakeClock(),
         fec_params=ONE_BYTE_BLOCK_FEC,
         watch_root=watch_root,
         target_host="10.0.0.1",
@@ -98,7 +105,8 @@ async def test_transient_failure_recovers_on_retry_without_touching_other_sender
     ipc = FakeIpcServer()
     ipc.fail_next_send(SenderId(1), SendQueueFullError(SenderId(1)))
     registry = make_registry(SenderId(0), SenderId(1), SenderId(2))
-    dispatcher = make_dispatcher(ipc, registry, tmp_path)
+    clock = FakeClock()
+    dispatcher = make_dispatcher(ipc, registry, tmp_path, clock)
 
     session_id = await dispatcher.dispatch(file_path)
 
@@ -110,6 +118,8 @@ async def test_transient_failure_recovers_on_retry_without_touching_other_sender
     assert {sender_id for sender_id, _ in ipc.sent} == {SenderId(0), SenderId(1), SenderId(2)}
     assert sorted(blocks_from_sent(ipc.sent)) == list(range(TOTAL_BLOCKS))
     assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(1), SenderId(2)]
+    # The retry genuinely waited for the queue to drain rather than spinning.
+    assert clock.now() == DISPATCH_RETRY_DELAY_SECONDS
 
 
 async def test_sender_that_exhausts_retries_is_lost_survivors_keep_original_shards(
@@ -127,7 +137,8 @@ async def test_sender_that_exhausts_retries_is_lost_survivors_keep_original_shar
     registry = make_registry(SenderId(0), SenderId(1), SenderId(2))
     dispatcher = make_dispatcher(ipc, registry, tmp_path)
 
-    session_id = await dispatcher.dispatch(file_path)
+    with structlog.testing.capture_logs() as captured_logs:
+        session_id = await dispatcher.dispatch(file_path)
 
     assert session_id is not None
     sent_sender_ids = {sender_id for sender_id, _ in ipc.sent}
@@ -137,6 +148,21 @@ async def test_sender_that_exhausts_retries_is_lost_survivors_keep_original_shar
         block_id for block_id in range(TOTAL_BLOCKS) if block_id not in lost_blocks
     ]
     assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(2)]
+
+    partial_failure_logs = [
+        entry for entry in captured_logs if entry["event"] == "dispatch_partially_failed"
+    ]
+    assert len(partial_failure_logs) == 1
+    log_entry = partial_failure_logs[0]
+    assert log_entry["session_id"] == session_id
+    assert log_entry["failed_sender_ids"] == [SenderId(1)]
+    # A compact (residue, modulus, count) summary, not the block enumeration:
+    # residue 1 of modulus 3 identifies blocks {1, 4, 7} exactly.
+    assert log_entry["lost_block_count"] == len(lost_blocks)
+    assert log_entry["lost_shards"] == [
+        {"sender_id": SenderId(1), "shard_residue": 1, "shard_modulus": 3, "block_count": 3}
+    ]
+    assert "lost_block_ids" not in log_entry
 
 
 async def test_single_sender_that_exhausts_retries_returns_none(tmp_path: Path) -> None:
@@ -215,6 +241,7 @@ def test_complete_session_on_an_unknown_session_id_does_not_raise() -> None:
         ipc=ipc,
         hasher=FakeHasher(),
         registry=registry,
+        clock=FakeClock(),
         fec_params=ONE_BYTE_BLOCK_FEC,
         watch_root=Path("/watch"),
         target_host="10.0.0.1",

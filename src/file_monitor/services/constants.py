@@ -6,6 +6,11 @@ DEBOUNCE_SECONDS = 0.2
 # retried only on a transient SendQueueFullError.
 MAX_DISPATCH_ATTEMPTS = 2
 
+# IpcServer.send() enqueues via put_nowait and never awaits, so a retry with
+# no delay runs in the same event-loop tick as the failed attempt and can
+# never observe a drained queue. This gives the write loop a chance to run.
+DISPATCH_RETRY_DELAY_SECONDS = 0.05
+
 SESSION_ID_RANDOM_BYTES = 8
 
 # proto3 leaves an unset uint64 as 0, so 0 must mean UNLIMITED, never
