@@ -23,6 +23,10 @@ those against real infrastructure (inotify, BLAKE3, Unix sockets); `services/`
 orchestrates watching, dispatching, and sender-liveness tracking; `main.py` is
 the composition root that wires everything together.
 
+The sender-facing wire contract — everything a C++ sender needs to implement
+against `file-monitor` — is in
+[`docs/SENDER_CONTRACT.md`](docs/SENDER_CONTRACT.md).
+
 ## Setup
 
 ```bash
