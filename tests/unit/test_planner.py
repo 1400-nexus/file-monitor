@@ -204,9 +204,14 @@ def test_build_manifest_rejects_a_path_outside_watch_root() -> None:
 def test_build_assign_session_carries_modulus_as_total_senders() -> None:
     manifest = common_pb2.Manifest(session_id="abc")
     assign_session = build_assign_session(
-        manifest, shard_modulus=3, target_host="10.0.0.5", target_port=9002
+        manifest,
+        shard_modulus=3,
+        target_host="10.0.0.5",
+        target_port=9002,
+        source_path="/var/nexus/watch/report.bin",
     )
     assert assign_session.manifest == manifest
     assert assign_session.total_senders == 3
     assert assign_session.target_host == "10.0.0.5"
     assert assign_session.target_port == 9002
+    assert assign_session.source_path == "/var/nexus/watch/report.bin"

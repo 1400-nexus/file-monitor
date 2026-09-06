@@ -94,10 +94,16 @@ def build_assign_session(
     shard_modulus: int,
     target_host: str,
     target_port: int,
+    source_path: str,
 ) -> ipc_pb2.AssignSession:
+    # source_path is the ABSOLUTE local path the sender mmaps. It is carried
+    # explicitly rather than left for the sender to rebuild from
+    # Manifest.filepath (relative, RX-facing) plus its own watch-dir guess --
+    # see AssignSession.source_path in ipc.proto.
     return ipc_pb2.AssignSession(
         manifest=manifest,
         total_senders=shard_modulus,
         target_host=target_host,
         target_port=target_port,
+        source_path=source_path,
     )

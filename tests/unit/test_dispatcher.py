@@ -76,6 +76,12 @@ async def test_three_active_senders_produce_disjoint_shards_covering_every_block
     assert {sender_id for sender_id, _ in ipc.sent} == {SenderId(0), SenderId(1), SenderId(2)}
     assert sorted(blocks_from_sent(ipc.sent)) == list(range(TOTAL_BLOCKS))
     assert dispatcher._dispatched_sessions[session_id] == [SenderId(0), SenderId(1), SenderId(2)]
+    for _sender_id, payload in ipc.sent:
+        _name, message = codec.decode(payload)
+        # the absolute source path, not something rebuilt from the relative
+        # Manifest.filepath
+        assert cast(Any, message).source_path == str(file_path)
+        assert cast(Any, message).manifest.filepath == "example.bin"
 
 
 async def test_empty_registry_returns_none_and_sends_nothing(tmp_path: Path) -> None:

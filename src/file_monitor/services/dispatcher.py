@@ -92,6 +92,7 @@ class SessionDispatcher:
                 shard_modulus=assignment.shard_modulus,
                 target_host=self._target_host,
                 target_port=assignment.target_port,
+                source_path=str(source_file.path),
             )
             payload = codec.encode(assign_session)
 

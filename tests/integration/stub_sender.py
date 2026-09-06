@@ -88,10 +88,16 @@ def print_assign_session(sender_id: int, assign_session: Any) -> None:
     filepath = Path(manifest.filepath)
     assert not filepath.is_absolute(), f"filepath must be relative, got {manifest.filepath!r}"
     assert ".." not in filepath.parts, f"filepath escapes watch root: {manifest.filepath!r}"
+    # This stub runs on Linux (the milestone harness); file-monitor emits a
+    # POSIX absolute path there.
+    assert assign_session.source_path.startswith("/"), (
+        f"source_path must be absolute, got {assign_session.source_path!r}"
+    )
 
     print(f"[sender {sender_id}] AssignSession:")
     print(f"  session_id    = {manifest.session_id}")
-    print(f"  filepath      = {manifest.filepath}")
+    print(f"  source_path   = {assign_session.source_path}  (absolute -- mmap this)")
+    print(f"  filepath      = {manifest.filepath}  (relative -- RX output name)")
     print(f"  file_size     = {manifest.file_size}")
     print(f"  total_blocks  = {manifest.total_blocks}")
     print(f"  k             = {manifest.k}")
@@ -113,6 +119,7 @@ def emit_assign_session_json(sender_arg: int, assign_session: Any) -> None:
     payload = {
         "sender_arg": sender_arg,
         "session_id": manifest.session_id,
+        "source_path": assign_session.source_path,
         "filepath": manifest.filepath,
         "file_size": manifest.file_size,
         "total_blocks": manifest.total_blocks,
