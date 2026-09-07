@@ -23,9 +23,16 @@ those against real infrastructure (inotify, BLAKE3, Unix sockets); `services/`
 orchestrates watching, dispatching, and sender-liveness tracking; `main.py` is
 the composition root that wires everything together.
 
-The sender-facing wire contract — everything a C++ sender needs to implement
-against `file-monitor` — is in
-[`docs/SENDER_CONTRACT.md`](docs/SENDER_CONTRACT.md).
+## Documentation
+
+| Document | Answers |
+|---|---|
+| [`docs/SENDER_CONTRACT.md`](docs/SENDER_CONTRACT.md) | Everything a C++ sender needs to talk to `file-monitor` — transport, the `proto_hash` handshake, message flow, the properties that bite (led by `Manifest.sender_id` being a shard residue), rate control, a worked shard example. |
+
+The shared architecture — the one-way constraint, the eight-process topology,
+ports-and-adapters, cross-language contracts, how the system is proven — and
+the cross-repo pin state live in the **`session-manager`** repo
+(`docs/INTEGRATION.md`, `SHARED_CODE.md`).
 
 ## Setup
 
