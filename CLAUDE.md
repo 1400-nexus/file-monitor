@@ -291,13 +291,12 @@ This follows the **Dependency Inversion** principle: tests depend on the same Pr
 
 ### Block Size vs Symbol Size
 
-`NEXUS_C_GUIDE.md` lists this as an open question; the code has settled it and
-`docs/GUIDE.md` §9 records the answer. **`Manifest.block_bytes` carries the
-symbol size.** A block is `k` symbols wide — `block_size = k * symbol_bytes`
-(280 KB at `k=200`, `symbol_bytes=1400`). Files are split into blocks; each
-block is FEC-encoded into `n` symbols. `domain/models.py` carries the hazard
-comment. Getting it backwards produces transfers that complete "successfully"
-and write garbage.
+This was an early open question; the code settled it and `docs/GUIDE.md` §9
+records the answer. **`Manifest.block_bytes` carries the symbol size.** A block
+is `k` symbols wide — `block_size = k * symbol_bytes` (280 KB at `k=200`,
+`symbol_bytes=1400`). Files are split into blocks; each block is FEC-encoded
+into `n` symbols. `domain/models.py` carries the hazard comment. Getting it
+backwards produces transfers that complete "successfully" and write garbage.
 
 ### Shard Assignment
 
