@@ -28,13 +28,10 @@ the composition root that wires everything together.
 | Document | Answers |
 |---|---|
 | [`docs/SENDER_CONTRACT.md`](docs/SENDER_CONTRACT.md) | Everything a C++ sender needs to talk to `file-monitor` — transport, the `proto_hash` handshake, message flow, the properties that bite (led by `Manifest.sender_id` being a shard residue), rate control, a worked shard example. |
-| [`session-manager/docs/GUIDE.md`](../session-manager/docs/GUIDE.md) | The whole control plane in one pass, both services covered — the one-way constraint, topology, ports-and-adapters, cross-language contracts, how it is proven, a bug log. Its shared architecture and machinery sections apply to this repo too. |
+| [`docs/GUIDE.md`](docs/GUIDE.md) | The whole control plane in one pass, both services covered — the one-way constraint, topology, ports-and-adapters, cross-language contracts, how it is proven, a bug log. Sections 6, 8 and 9 (this service, the shared machinery, the cross-language contracts) are the ones that matter here. Kept byte-identical to the copy in `session-manager`. |
 
-The shared architecture — the one-way constraint, the eight-process topology,
-ports-and-adapters, cross-language contracts, how the system is proven — and
-the cross-repo pin state live in the **`session-manager`** repo
-(`docs/GUIDE.md` for the full picture; `docs/INTEGRATION.md` and `SHARED_CODE.md`
-for the integration plan and the copied-code ledger).
+The integration plan and the copied-code ledger live only in the
+**`session-manager`** repo (`docs/INTEGRATION.md`, `SHARED_CODE.md`).
 
 ## Setup
 
