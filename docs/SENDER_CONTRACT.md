@@ -4,11 +4,13 @@ Everything a C++ sender needs to talk to `file-monitor`. You should be able to
 implement against this document without reading the Python. Where it points at a
 source file, that file is the authority and this is a summary.
 
-Contract pin: **`nexus-proto` at `7f406db`**. Build your generated C++ from that
+Contract pin: **`nexus-proto` at `7f757c5`**. Build your generated C++ from that
 exact commit. `proto_hash` covers the raw bytes of every `.proto` file, so it
 moves with any edit (a comment included) and a wrong one is a **refused
-connection** — see §2. Your repo is currently pinned five commits behind this;
-bump it first.
+connection** — see §2. `proto_hash` covers *all* `.proto` files, including
+`rx.proto`, which you never compile — so an RX-side change still moves your
+hash and forces your re-pin. Re-pin on every `nexus-proto` commit, no
+exceptions.
 
 Unlike the RX side, the **file payload is yours to move**: `file-monitor` tells
 you which file, which blocks, and where to send them; you mmap the file,
@@ -63,10 +65,10 @@ docstring of **`src/file_monitor/ipc/handshake.py`**. In brief:
 in its log). This is the first thing that fails if your pin is wrong, and the
 error names a hash, not the cause.
 
-At `nexus-proto@7f406db` the digest is:
+At `nexus-proto@7f757c5` the digest is:
 
 ```
-38cac339d495241ae757fbeec84a6ecdc5377f838798ff9df1e19650bcff20df
+5b1483b951ae1a4affbed914dd2fb60e696871c7e1140e944c41c324d1b4e6ec
 ```
 
 (Recompute it — it changes with any `.proto` edit. If your checkout is on a
